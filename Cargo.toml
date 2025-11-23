@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["api",  "config_loader", "worker", "config_loader_derive", "models"]

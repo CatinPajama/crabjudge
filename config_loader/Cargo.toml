@@ -1,0 +1,9 @@
+[package]
+name = "config_loader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+config = "0.15.19"
+config_loader_derive = {path = "../config_loader_derive/"}
+serde = { version = "1.0.228", features = ["derive"] }
