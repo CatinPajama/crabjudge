@@ -1,17 +1,16 @@
 use std::path::Path;
 
-use bollard::{Docker, secret::ContainerCreateBody};
-use config::Environment;
+use bollard::Docker;
 use config_loader::get_configuration;
 use deadpool::managed::Object;
 use futures::future::join_all;
 use futures_util::StreamExt;
 use lapin::{
-    Channel, Connection, ConnectionProperties, Consumer, message::Delivery, options::*,
+    Channel, Connection, ConnectionProperties, Consumer, options::*,
     types::FieldTable,
 };
 use models::{DatabaseConfig, RabbitMQConfig, RuntimeConfigs, WorkerTask};
-use sqlx::{PgPool, types::uuid};
+use sqlx::PgPool;
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use worker::{ContainerGroup, Pool, run_exec};

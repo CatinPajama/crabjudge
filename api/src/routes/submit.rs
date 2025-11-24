@@ -10,8 +10,6 @@ use lapin::{
     types::FieldTable,
 };
 use models::WorkerTask;
-use serde::Serialize;
-use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
 pub struct SubmitJson {

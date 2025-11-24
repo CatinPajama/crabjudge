@@ -1,7 +1,6 @@
-use config_loader_derive::ConfigType;
 use std::{
     env,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use config::ConfigError;

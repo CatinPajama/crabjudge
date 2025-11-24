@@ -1,4 +1,4 @@
-use api::{Application, startup};
+use api::Application;
 use models::Settings;
 
 #[tokio::main]

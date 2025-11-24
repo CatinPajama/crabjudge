@@ -1,13 +1,12 @@
 use actix_web::cookie::time::Duration;
 use actix_web::web::Data;
-use actix_web::{HttpRequest, HttpResponse, ResponseError, cookie::Cookie, web::Form};
+use actix_web::{HttpResponse, ResponseError, cookie::Cookie, web::Form};
 use argon2::Argon2;
 use argon2::PasswordHasher;
 use argon2::password_hash::SaltString;
 use argon2::password_hash::rand_core::OsRng;
 use serde::Deserialize;
-use sqlx::{Executor, PgExecutor, PgPool};
-use uuid::Uuid;
+use sqlx::PgPool;
 
 #[derive(thiserror::Error)]
 pub enum SignupError {

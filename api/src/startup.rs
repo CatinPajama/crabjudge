@@ -1,14 +1,10 @@
-use std::{net::TcpListener, u16};
+use std::net::TcpListener;
 
 use crate::routes::signup;
-use crate::routes::{Credentials, login, status, submissions, submit, submit_problem};
-use actix_session::config::SessionMiddlewareBuilder;
+use crate::routes::{login, status, submissions, submit_problem};
+use actix_session::SessionMiddleware;
 use actix_session::storage::RedisSessionStore;
-use actix_session::{Session, SessionMiddleware};
-use actix_web::HttpResponse;
-use actix_web::body::MessageBody;
 use actix_web::cookie::Key;
-use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::{
     App,
     dev::Server,
@@ -17,13 +13,12 @@ use actix_web::{
 use models::Settings;
 use sqlx::PgPool;
 
+#[allow(dead_code)]
 pub struct Application {
     port: u16,
     host: String,
     server: Server,
 }
-
-pub struct ApplicationBaseUrl(String);
 
 impl Application {
     pub async fn build(settings: Settings) -> Result<Self, anyhow::Error> {

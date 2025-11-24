@@ -4,7 +4,6 @@ use actix_web::{
     web::{self, Data},
 };
 use serde::Serialize;
-use sqlx::Executor;
 use sqlx::PgPool;
 
 #[derive(Serialize)]
@@ -19,7 +18,7 @@ pub async fn status(
     pg_pool: Data<PgPool>,
     session: Session,
 ) -> impl Responder {
-    if let Ok(Some(user_id)) = session.get::<i64>("user_id") {
+    if let Ok(Some(_user_id)) = session.get::<i64>("user_id") {
         let submission_id = path.into_inner().0;
 
         let row: Status = sqlx::query_as!(

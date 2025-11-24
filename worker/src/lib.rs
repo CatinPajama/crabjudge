@@ -1,21 +1,13 @@
-mod manager;
-
 use bollard::{
-    Docker,
-    container::RemoveContainerOptions,
-    errors::Error as DockerError,
-    exec::StartExecResults,
-    query_parameters::{self, CreateImageOptions, CreateImageOptionsBuilder},
-    secret::ContainerCreateBody,
+    Docker, errors::Error as DockerError, exec::StartExecResults, secret::ContainerCreateBody,
 };
 use deadpool::managed::{self, Manager};
 use futures::TryStreamExt;
 use futures_util::stream::StreamExt;
-use tokio::{io::AsyncWriteExt, sync::Mutex, task::JoinHandle};
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 
 pub struct ContainerConn {
     pub id: String,
-    docker: Docker,
 }
 async fn create_container(docker: &Docker, env: &str) -> Result<String, DockerError> {
     let cfg = ContainerCreateBody {
@@ -99,10 +91,7 @@ impl Manager for ContainerGroup {
     async fn create(&self) -> Result<Self::Type, Self::Error> {
         let id = create_container(&self.docker, &self.image).await?;
         self.containers.lock().await.push(id.clone());
-        Ok(ContainerConn {
-            id,
-            docker: self.docker.clone(),
-        })
+        Ok(ContainerConn { id })
     }
     async fn recycle(
         &self,
@@ -119,3 +108,45 @@ impl Manager for ContainerGroup {
             .map_err(managed::RecycleError::from)
     }
 }
+
+pub async fn run_exec(
+    docker: &Docker,
+    id: &str,
+    cmd: Vec<String>,
+    testcase: String,
+) -> Result<String, DockerError> {
+    let exec_id = docker
+        .create_exec(
+            id,
+            bollard::models::ExecConfig {
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                attach_stdin: Some(true),
+                cmd: Some(cmd),
+                ..Default::default()
+            },
+        )
+        .await?
+        .id;
+
+    let mut exec_output = String::new();
+
+    if let StartExecResults::Attached { mut output, input } =
+        docker.start_exec(&exec_id, None).await?
+    {
+        let mut input_stream = input;
+
+        input_stream.write_all(testcase.as_bytes()).await?;
+
+        input_stream.shutdown().await?;
+
+        while let Some(Ok(msg)) = output.next().await {
+            exec_output.push_str(&msg.to_string());
+        }
+    } else {
+        // TODO handle detach case
+    }
+
+    Ok(exec_output)
+}
+pub type Pool = managed::Pool<ContainerGroup>;

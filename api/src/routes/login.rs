@@ -3,7 +3,6 @@ use anyhow::Context;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::{Engine as _, engine::general_purpose};
 use std::future::{Ready, ready};
-use uuid::Uuid;
 
 use actix_web::{
     FromRequest, HttpResponse, ResponseError,
@@ -11,7 +10,7 @@ use actix_web::{
     http::header::HeaderValue,
     web::Data,
 };
-use sqlx::{Executor, PgPool};
+use sqlx::PgPool;
 
 #[derive(thiserror::Error)]
 pub enum LoginError {
@@ -137,7 +136,7 @@ pub async fn login(
 
     match argon2.verify_password(credentials.password.as_bytes(), &phc) {
         Ok(_) => {
-            if let Ok(Some(user_id)) = session.get::<i64>("user_id") {
+            if let Ok(Some(_user_id)) = session.get::<i64>("user_id") {
             } else {
                 session.insert("user_id", row.user_id).unwrap();
             }
