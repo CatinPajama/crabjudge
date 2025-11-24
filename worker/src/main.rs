@@ -3,6 +3,7 @@ use std::path::Path;
 use bollard::{Docker, secret::ContainerCreateBody};
 use config::Environment;
 use config_loader::get_configuration;
+use deadpool::managed::Object;
 use futures::future::join_all;
 use futures_util::StreamExt;
 use lapin::{
@@ -75,12 +76,11 @@ pub enum ExecError {
 
 async fn exec_in_docker(
     docker_task: Docker,
-    pool: Pool,
+    conn : Object<ContainerGroup>,
     code: String,
     testcase: String,
     command: String,
 ) -> Result<String, ExecError> {
-    let conn = pool.get().await?;
 
     let mut cmd: Vec<_> = command.split(' ').map(|x| x.to_string()).collect();
     cmd.push(code);
@@ -130,11 +130,11 @@ async fn service_request(
         let mut handles = vec![];
         while let Some(delivery) = consumer.next().await {
             let delivery = delivery.unwrap();
-            let pool = pool.clone();
             let docker_task = docker.clone();
             let command = command.clone();
             let pgpool = pgpool.clone();
-
+            
+            let conn = pool.get().await.unwrap();
             let task: WorkerTask = serde_json::from_slice(&delivery.data)
                 .map_err(|_| ExecError::ParseError)
                 .unwrap();
@@ -149,7 +149,7 @@ async fn service_request(
                 .unwrap();
 
                 if let Ok(exec_output) =
-                    exec_in_docker(docker_task, pool, task.code, row.testcase, command).await
+                    exec_in_docker(docker_task, conn, task.code, row.testcase, command).await
                 {
                     let status : &str = if are_equal_ignore_whitespace(&exec_output, &row.output) {
                         ExecStatus::Passed
