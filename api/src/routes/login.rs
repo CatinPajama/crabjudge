@@ -139,7 +139,6 @@ pub async fn login(
         Ok(_) => {
             if let Ok(Some(user_id)) = session.get::<i64>("user_id") {
             } else {
-                println!("putting in session {}", row.user_id);
                 session.insert("user_id", row.user_id).unwrap();
             }
             Ok(HttpResponse::Ok().finish())

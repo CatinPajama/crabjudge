@@ -1,0 +1,6 @@
+user : "api"
+password : 123
+host : "localhost"
+dbname : "judge"
+port : 5432
+admin_username : admin

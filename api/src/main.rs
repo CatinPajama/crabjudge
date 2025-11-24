@@ -1,8 +1,9 @@
-use api::{Application, configuration, startup};
+use api::{Application, startup};
+use models::Settings;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let settings = configuration::get_configuration().expect("Unable to read configuration files");
+    let settings = Settings::get_configuration().expect("Unable to read configuration files");
 
     let app = Application::build(settings).await?;
 

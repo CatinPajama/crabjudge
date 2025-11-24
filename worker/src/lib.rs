@@ -1,4 +1,3 @@
-mod configuration;
 mod manager;
 
 use bollard::{
@@ -18,17 +17,6 @@ pub struct ContainerConn {
     pub id: String,
     docker: Docker,
 }
-/*
-impl ContainerConn {
-    async fn drop(&mut self) {
-        let docker = self.docker.clone();
-        let id = self.id.clone();
-
-        tokio::spawn(async move {});
-    }
-}
-*/
-
 async fn create_container(docker: &Docker, env: &str) -> Result<String, DockerError> {
     let cfg = ContainerCreateBody {
         image: Some(env.to_string()),
@@ -131,106 +119,3 @@ impl Manager for ContainerGroup {
             .map_err(managed::RecycleError::from)
     }
 }
-/*
-pub async fn run_exec(
-    docker: &Docker,
-    id: &str,
-    cmd: Vec<String>,
-    testcase: String,
-) -> Result<String, DockerError> {
-    let exec_id = docker
-        .create_exec(
-            id,
-            bollard::models::ExecConfig {
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                cmd: Some(cmd),
-                ..Default::default()
-            },
-        )
-        .await?
-        .id;
-
-    let mut exec_output = String::new();
-    if let bollard::exec::StartExecResults::Attached { mut output, .. } =
-        docker.start_exec(&exec_id, None).await?
-    {
-        while let Some(Ok(msg)) = output.next().await {
-            exec_output.push_str(&msg.to_string());
-        }
-    }
-    Ok(exec_output)
-}
-*/
-pub async fn run_exec(
-    docker: &Docker,
-    id: &str,
-    cmd: Vec<String>,
-    testcase: String,
-) -> Result<String, DockerError> {
-    let exec_id = docker
-        .create_exec(
-            id,
-            bollard::models::ExecConfig {
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                attach_stdin: Some(true),
-                cmd: Some(cmd),
-                ..Default::default()
-            },
-        )
-        .await?
-        .id;
-
-    let mut exec_output = String::new();
-
-    if let StartExecResults::Attached { mut output, input } =
-        docker.start_exec(&exec_id, None).await?
-    {
-        let mut input_stream = input;
-
-        input_stream.write_all(testcase.as_bytes()).await?;
-
-        input_stream.shutdown().await?;
-
-        while let Some(Ok(msg)) = output.next().await {
-            exec_output.push_str(&msg.to_string());
-        }
-    } else {
-        // TODO handle detach case
-    }
-
-    Ok(exec_output)
-}
-pub type Pool = managed::Pool<ContainerGroup>;
-/*
-#[tokio::test]
-async fn test_docker() -> Result<(), Box<dyn std::error::Error>> {
-    let docker = Docker::connect_with_local_defaults()?;
-
-    let manager = ContainerGroup::new(docker.clone(), "python:3.12-slim").await?;
-
-    let pool = Pool::builder(manager).max_size(3).build()?;
-
-    let mut handles: Vec<JoinHandle<()>> = vec![];
-
-    for i in 0..5 {
-        let d = docker.clone();
-        let conn = pool.get().await.unwrap();
-
-        let cmd: Vec<String> = vec![
-            "python".to_string(),
-            "-c".to_string(),
-            format!("import time; time.sleep({}); print('hi')", 5 - i + 1),
-        ];
-        handles.push(tokio::spawn(async move {
-            println!("Exec in container {}", conn.id);
-            run_exec(&d, &conn.id, cmd).await.unwrap();
-        }));
-    }
-    futures::future::join_all(handles).await;
-    pool.manager().close().await;
-    println!("All tasks done. Containers cleaned automatically.");
-    Ok(())
-}
-*/

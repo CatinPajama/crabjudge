@@ -10,7 +10,7 @@ use lapin::{
     Channel, Connection, ConnectionProperties, Consumer, message::Delivery, options::*,
     types::FieldTable,
 };
-use models::{RuntimeConfigs, WorkerTask};
+use models::{DatabaseConfig, RabbitMQConfig, RuntimeConfigs, WorkerTask};
 use sqlx::{PgPool, types::uuid};
 use thiserror::Error;
 use tokio::task::JoinHandle;
@@ -182,12 +182,15 @@ async fn consume(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let addr = std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://127.0.0.1:5672/%2f".into());
 
-    let conn = Connection::connect(&addr, ConnectionProperties::default()).await?;
+    let rabbitmq_settings : RabbitMQConfig = get_configuration(Path::new("../configuration/")).unwrap();
+    let postgres_settings : DatabaseConfig = get_configuration(Path::new("../configuration/")).unwrap();
+    
+    let conn = Connection::connect(&rabbitmq_settings.url(), ConnectionProperties::default()).await?;
+
     let runtimeconfigs: RuntimeConfigs = get_configuration(Path::new("../configuration/")).unwrap();
-
-    let pgpool = PgPool::connect("postgres://api:123@localhost:5432/judge?sslmode=disable")
+    
+    let pgpool = PgPool::connect(&postgres_settings.url())
         .await
         .unwrap();
 

@@ -8,3 +8,5 @@ serde = { version = "1.0.228", features = ["derive"] }
 config_loader_derive = {path = "../config_loader_derive/"}
 config_loader = {path = "../config_loader"}
 uuid = {version = "1.18.1", features = ["serde"]}
+config = "0.15.19"
+urlencoding = "2.1.3"

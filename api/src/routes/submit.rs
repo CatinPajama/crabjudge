@@ -54,7 +54,6 @@ pub async fn submit_problem(
             )
             .await
             .unwrap();
-        println!("done_publishing");
         HttpResponse::Ok().body(format!("Submitting problem with ID: {}", problem_id))
     } else {
         HttpResponse::Unauthorized().finish()

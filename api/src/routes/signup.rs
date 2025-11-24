@@ -71,7 +71,6 @@ pub async fn signup(
         .map_err(|_| SignupError::Invalid(anyhow::anyhow!("Unabled to argon2 hash")))?
         .to_string();
 
-    println!("{}", password_hash);
     sqlx::query!(
         r#"INSERT INTO users (username, password) VALUES ($1,$2)"#,
         form.username,

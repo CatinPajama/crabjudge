@@ -1,7 +1,7 @@
 use std::{net::TcpListener, u16};
 
+use crate::routes::signup;
 use crate::routes::{Credentials, login, status, submissions, submit, submit_problem};
-use crate::{configuration::Settings, routes::signup};
 use actix_session::config::SessionMiddlewareBuilder;
 use actix_session::storage::RedisSessionStore;
 use actix_session::{Session, SessionMiddleware};
@@ -14,6 +14,7 @@ use actix_web::{
     dev::Server,
     web::{self, Data},
 };
+use models::Settings;
 use sqlx::PgPool;
 
 pub struct Application {
@@ -34,8 +35,13 @@ impl Application {
         let pgpool = PgPool::connect_lazy(&settings.database.url())?;
 
         let listener = TcpListener::bind(address)?;
-
-        let server = run(pgpool, listener).await?;
+        let redis_store = RedisSessionStore::new(settings.redis.url()).await.unwrap();
+        let rabbitmq_conn = lapin::Connection::connect(
+            &settings.rabbitmq.url(),
+            lapin::ConnectionProperties::default(),
+        )
+        .await?;
+        let server = run(pgpool, listener, redis_store, rabbitmq_conn).await?;
         Ok(Application {
             host: settings.application.host,
             port: settings.application.port,
@@ -47,20 +53,15 @@ impl Application {
     }
 }
 
-pub async fn run(pgpool: PgPool, listener: TcpListener) -> Result<Server, anyhow::Error> {
+pub async fn run(
+    pgpool: PgPool,
+    listener: TcpListener,
+    redis_store: RedisSessionStore,
+    rabbitmq_conn: lapin::Connection,
+) -> Result<Server, anyhow::Error> {
     let data_pgpool = Data::new(pgpool);
+    let data_rabbitmq = Data::new(rabbitmq_conn);
     let secret_key = Key::generate();
-
-    // TODO move redis outside the function
-    let redis_store = RedisSessionStore::new("redis://127.0.0.1:6379")
-        .await
-        .unwrap();
-
-    let rabbitmq_addr =
-        std::env::var("AMQP_ADDR").unwrap_or_else(|_| "amqp://127.0.0.1:5672/%2f".into());
-    let rabbitmq_conn = Data::new(
-        lapin::Connection::connect(&rabbitmq_addr, lapin::ConnectionProperties::default()).await?,
-    );
 
     let server = actix_web::HttpServer::new(move || {
         App::new()
@@ -71,7 +72,7 @@ pub async fn run(pgpool: PgPool, listener: TcpListener) -> Result<Server, anyhow
                     .build(),
             )
             .app_data(data_pgpool.clone())
-            .app_data(rabbitmq_conn.clone())
+            .app_data(data_rabbitmq.clone())
             .route("/login", web::post().to(login))
             .route("/signup", web::post().to(signup))
             .route("/{problemID}/submit", web::post().to(submit_problem))
