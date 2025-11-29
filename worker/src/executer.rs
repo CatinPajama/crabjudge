@@ -45,17 +45,17 @@ async fn declare_queue_exchange(
     Ok(())
 }
 
-async fn exec_testcase(
+pub async fn exec_testcase(
     docker_task: Docker,
-    conn: Object<ContainerGroup>,
-    code: String,
-    testcase: String,
-    command: String,
+    container_id: &str,
+    code: &str,
+    testcase: &str,
+    command: &str,
 ) -> Result<String, ExecError> {
     let mut cmd: Vec<_> = command.split(' ').map(|x| x.to_string()).collect();
-    cmd.push(code);
+    cmd.push(code.to_string());
 
-    Ok(crate::docker::run_exec(&docker_task, &conn.id, cmd, testcase).await?)
+    Ok(crate::docker::run_exec(&docker_task, container_id, cmd, testcase).await?)
 }
 
 async fn get_consumer(
@@ -88,7 +88,7 @@ impl From<ExecStatus> for &str {
     }
 }
 
-async fn listen(
+async fn listen<T: TestcaseHandler>(
     docker: Docker,
     pool: Pool,
     pgpool: PgPool,
@@ -108,21 +108,27 @@ async fn listen(
             .unwrap();
 
         handles.push(tokio::spawn(async move {
-            handle_message(delivery, docker_task, command, pgpool, conn, task).await;
+            handle_message::<T>(docker_task, command, pgpool, conn, task).await;
+            let _ = delivery.ack(BasicAckOptions::default()).await;
         }));
     }
     join_all(handles).await;
 }
 
-async fn handle_message(
-    delivery: lapin::message::Delivery,
+pub struct Testcase {
+    testcase: String,
+    output: String,
+}
+
+async fn handle_message<T: TestcaseHandler>(
     docker_task: Docker,
     command: String,
     pgpool: sqlx::Pool<sqlx::Postgres>,
-    conn: Object<ContainerGroup>,
+    container: Object<ContainerGroup>,
     task: WorkerTask,
 ) {
-    let row = sqlx::query!(
+    let row = sqlx::query_as!(
+        Testcase,
         "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
         task.problem_id as i64
     )
@@ -130,16 +136,34 @@ async fn handle_message(
     .await
     .unwrap();
 
-    if let Ok(exec_output) =
-        exec_testcase(docker_task, conn, task.code, row.testcase, command).await
+    if let Ok(exec_output) = exec_testcase(
+        docker_task,
+        &container.id,
+        &task.code,
+        &row.testcase,
+        &command,
+    )
+    .await
     {
-        let status: &str = if are_equal_ignore_whitespace(&exec_output, &row.output) {
-            ExecStatus::Passed
-        } else {
-            ExecStatus::Failed
-        }
-        .into();
-        sqlx::query!(
+        T::handle_testcase(pgpool, task, row, exec_output).await;
+    }
+}
+
+pub trait TestcaseHandler {
+    fn handle_testcase(
+        pgpool: sqlx::Pool<sqlx::Postgres>,
+        task: WorkerTask,
+        row: Testcase,
+        exec_output: String,
+    ) -> impl std::future::Future<Output = ()> + std::marker::Send {
+        async move {
+            let status: &str = if are_equal_ignore_whitespace(&exec_output, &row.output) {
+                ExecStatus::Passed
+            } else {
+                ExecStatus::Failed
+            }
+            .into();
+            sqlx::query!(
             "INSERT INTO submit_status (user_id, problem_id, output, status) VALUES($1,$2,$3,$4)",
             task.user_id as i64,
             task.problem_id as i64,
@@ -149,12 +173,11 @@ async fn handle_message(
         .execute(&pgpool)
         .await
         .unwrap();
-
-        let _ = delivery.ack(BasicAckOptions::default()).await;
+        }
     }
 }
 
-pub async fn execute(
+pub async fn execute<T: TestcaseHandler>(
     runtimeconfigs: RuntimeConfigs,
     conn: lapin::Connection,
     pgpool: PgPool,
@@ -169,15 +192,15 @@ pub async fn execute(
             let manager = ContainerGroup::new(docker_clone.clone(), &runtime.image)
                 .await
                 .unwrap();
-            let rabbitmq_pool = Pool::builder(manager).max_size(3).build().unwrap();
+            let docker_pool = Pool::builder(manager).max_size(3).build().unwrap();
             let consumer = get_consumer(&runtime.image, &runtime.image, channel)
                 .await
                 .expect("Unable to get consumer");
 
             tokio::select! {
-                _ = listen(docker_clone, rabbitmq_pool.clone(), pgpool_clone.clone(), consumer, runtime.command) => {},
+                _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.command) => {},
                 _ = tokio::signal::ctrl_c() => {
-                    rabbitmq_pool.manager().close().await;
+                    docker_pool.manager().close().await;
                 }
             }
         });

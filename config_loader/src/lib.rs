@@ -1,7 +1,4 @@
-use std::{
-    env,
-    path::Path,
-};
+use std::{env, path::Path};
 
 use config::ConfigError;
 
@@ -25,6 +22,7 @@ pub fn get_configuration<T: ConfigType + serde::de::DeserializeOwned + PartialEq
 
 #[cfg(test)]
 mod test {
+    use config_loader_derive::ConfigType;
     use std::{
         fs::File,
         io::{self, Write},

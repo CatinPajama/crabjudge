@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 config = "0.15.19"
 serde = { version = "1.0.228", features = ["derive"] }
+
+
+[dev-dependencies]
+config_loader_derive = {path = "../config_loader_derive/"}

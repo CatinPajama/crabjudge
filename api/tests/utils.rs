@@ -1,18 +1,17 @@
-use actix_web::dev::Server;
-use api::{Settings, configuration, get_configuration};
+use actix_session::storage::RedisSessionStore;
+use models::Settings;
 use sqlx::{Connection, Executor, PgConnection, PgPool, postgres::PgConnectOptions};
-use std::{io, net::TcpListener, sync::Arc};
+use std::net::TcpListener;
 use uuid::Uuid;
 
 pub struct TestApp {
     pub port: u16,
 }
 
-
 pub async fn spawn_app() -> TestApp {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Unable to start tcp listener");
 
-    let settings = get_configuration().expect("Unable to read configuration");
+    let settings = Settings::get_configuration().expect("Unable to read configuration files");
     let pg_options = PgConnectOptions::new()
         .database("postgres")
         .username(&settings.database.user)
@@ -21,6 +20,13 @@ pub async fn spawn_app() -> TestApp {
     let mut conn = PgConnection::connect_with(&pg_options)
         .await
         .expect("Unable to connect to postgres");
+
+    let rabbitmq_conn = lapin::Connection::connect(
+        &settings.rabbitmq.url(),
+        lapin::ConnectionProperties::default(),
+    )
+    .await
+    .expect("Unable to connect rabbitmq");
 
     let dbname = Uuid::new_v4().to_string();
     let dbname_query = format!(r#"CREATE DATABASE "{}";"#, dbname);
@@ -38,6 +44,7 @@ pub async fn spawn_app() -> TestApp {
         .await
         .expect("Unable to connect to new database");
 
+    let redis_store = RedisSessionStore::new(settings.redis.url()).await.unwrap();
     sqlx::migrate!("../migrations")
         .run(&pg_pool)
         .await
@@ -46,7 +53,7 @@ pub async fn spawn_app() -> TestApp {
     let app = TestApp {
         port: listener.local_addr().unwrap().port(),
     };
-    let server = api::run(pg_pool, listener)
+    let server = api::run(pg_pool, listener, redis_store, rabbitmq_conn)
         .await
         .expect("Unable to run the app");
     let _ = tokio::spawn(async {

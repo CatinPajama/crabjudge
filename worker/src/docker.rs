@@ -34,7 +34,7 @@ pub async fn run_exec(
     docker: &Docker,
     id: &str,
     cmd: Vec<String>,
-    testcase: String,
+    testcase: &str,
 ) -> Result<String, bollard::errors::Error> {
     let exec_id = docker
         .create_exec(

@@ -5,7 +5,10 @@ use config_loader::get_configuration;
 use lapin::{Connection, ConnectionProperties};
 use models::{DatabaseConfig, RabbitMQConfig, RuntimeConfigs};
 use sqlx::PgPool;
-use worker::executer::execute;
+use worker::executer::{TestcaseHandler, execute};
+
+struct DefaultTestcaseHandler {}
+impl TestcaseHandler for DefaultTestcaseHandler {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,6 +26,6 @@ async fn main() -> anyhow::Result<()> {
 
     let docker = Docker::connect_with_local_defaults()?;
 
-    execute(runtimeconfigs, conn, pgpool, docker).await;
+    execute::<DefaultTestcaseHandler>(runtimeconfigs, conn, pgpool, docker).await;
     Ok(())
 }

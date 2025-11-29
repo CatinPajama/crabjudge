@@ -351,6 +351,7 @@ dependencies = [
  "argon2",
  "base64 0.22.1",
  "config",
+ "futures-util",
  "lapin",
  "models",
  "reqwest",
@@ -918,6 +919,7 @@ name = "config_loader"
 version = "0.1.0"
 dependencies = [
  "config",
+ "config_loader_derive",
  "serde",
 ]
 
@@ -3834,6 +3836,15 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tests"
+version = "0.1.0"
+dependencies = [
+ "api",
+ "tokio",
+ "worker",
 ]
 
 [[package]]

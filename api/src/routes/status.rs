@@ -21,15 +21,18 @@ pub async fn status(
     if let Ok(Some(_user_id)) = session.get::<i64>("user_id") {
         let submission_id = path.into_inner().0;
 
-        let row: Status = sqlx::query_as!(
+        let row: Result<Status, _> = sqlx::query_as!(
             Status,
             "SELECT user_id,problem_id,status,output from submit_status WHERE submission_id = $1",
             submission_id
         )
         .fetch_one(pg_pool.as_ref())
-        .await
-        .unwrap();
-        HttpResponse::Ok().json(row)
+        .await;
+
+        match row {
+            Ok(row) => HttpResponse::Ok().json(row),
+            Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        }
     } else {
         HttpResponse::Unauthorized().finish()
     }
