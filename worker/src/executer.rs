@@ -7,6 +7,7 @@ use futures_util::StreamExt;
 use lapin::{Channel, Consumer, options::*, types::FieldTable};
 use models::{RuntimeConfigs, WorkerTask};
 use sqlx::PgPool;
+use tokio::signal::unix::{SignalKind, signal};
 
 fn are_equal_ignore_whitespace(s1: &str, s2: &str) -> bool {
     let s1_filtered: String = s1.chars().filter(|c| !c.is_whitespace()).collect();
@@ -197,9 +198,14 @@ pub async fn execute<T: TestcaseHandler>(
                 .await
                 .expect("Unable to get consumer");
 
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
             tokio::select! {
                 _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.command) => {},
-                _ = tokio::signal::ctrl_c() => {
+                _ = tokio::signal::ctrl_c()  => {
+                    docker_pool.manager().close().await;
+                },
+                _ = sigterm.recv() => {
                     docker_pool.manager().close().await;
                 }
             }
