@@ -13,8 +13,10 @@ pub fn get_configuration<T: ConfigType + serde::de::DeserializeOwned + PartialEq
 
     let env_dir = base_path.join(&env);
     let extra = env_dir.join(format!("{}.yaml", T::get_config_name()));
+    let prefix = "CRABJUDGE_".to_string() + &T::get_config_name();
     let settings = config::Config::builder()
-        .add_source(config::File::from(extra))
+        .add_source(config::File::from(extra).required(false))
+        .add_source(config::Environment::with_prefix(&prefix))
         .build()?;
 
     settings.try_deserialize()

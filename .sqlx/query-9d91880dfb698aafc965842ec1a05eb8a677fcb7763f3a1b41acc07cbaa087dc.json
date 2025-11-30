@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "testcase",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "output",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "9d91880dfb698aafc965842ec1a05eb8a677fcb7763f3a1b41acc07cbaa087dc"
+}

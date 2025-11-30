@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
 
     let runtimeconfigs: RuntimeConfigs = get_configuration(Path::new("../configuration/")).unwrap();
 
-    let pgpool = PgPool::connect(&postgres_settings.url()).await.unwrap();
+    let pgpool = PgPool::connect_lazy(&postgres_settings.url()).unwrap();
 
     let docker = Docker::connect_with_local_defaults()?;
 
