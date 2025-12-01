@@ -53,9 +53,15 @@ pub async fn spawn_app() -> TestApp {
     let app = TestApp {
         port: listener.local_addr().unwrap().port(),
     };
-    let server = api::run(pg_pool, listener, redis_store, rabbitmq_conn)
-        .await
-        .expect("Unable to run the app");
+    let server = api::run(
+        pg_pool,
+        listener,
+        redis_store,
+        rabbitmq_conn,
+        settings.runtimeconfigs,
+    )
+    .await
+    .expect("Unable to run the app");
     let _ = tokio::spawn(async {
         server.await.expect("Unable to start server");
     });

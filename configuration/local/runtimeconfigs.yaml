@@ -1,10 +1,12 @@
 runtimeconfigs:
-  - image : python:3.12-slim
+  "python:3.12":
+    image : python:3.12-slim
     command : python -c
     timeout : 2
     memory : 2048
-
-  - image : node:20-alpine
+  
+  "node:20":
+    image : node:20-alpine
     command : node -e
     timeout : 2
     memory : 2048

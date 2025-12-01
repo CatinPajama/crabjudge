@@ -9,7 +9,7 @@ use lapin::{
     options::{BasicPublishOptions, ExchangeDeclareOptions},
     types::FieldTable,
 };
-use models::WorkerTask;
+use models::{RuntimeConfigs, WorkerTask};
 
 #[derive(serde::Deserialize)]
 pub struct SubmitJson {
@@ -40,9 +40,13 @@ pub async fn submit_problem(
     path: web::Path<(i64,)>,
     conn: Data<lapin::Connection>,
     session: Session,
+    runtimeconfigs: Data<RuntimeConfigs>,
 ) -> Result<HttpResponse, SubmitError> {
     // sanitize code size
     if let Ok(Some(user_id)) = session.get::<i64>("user_id") {
+        if !runtimeconfigs.runtimeconfigs.contains_key(&request.env) {
+            return Ok(HttpResponse::BadRequest().body("Invalid environment"));
+        }
         let problem_id = path.into_inner().0;
         let channel = conn.create_channel().await?;
 

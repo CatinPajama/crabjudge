@@ -10,7 +10,7 @@ use actix_web::{
     dev::Server,
     web::{self, Data},
 };
-use models::Settings;
+use models::{RuntimeConfigs, Settings};
 use sqlx::PgPool;
 
 #[allow(dead_code)]
@@ -36,7 +36,14 @@ impl Application {
             lapin::ConnectionProperties::default(),
         )
         .await?;
-        let server = run(pgpool, listener, redis_store, rabbitmq_conn).await?;
+        let server = run(
+            pgpool,
+            listener,
+            redis_store,
+            rabbitmq_conn,
+            settings.runtimeconfigs,
+        )
+        .await?;
         Ok(Application {
             host: settings.application.host,
             port: settings.application.port,
@@ -53,9 +60,11 @@ pub async fn run(
     listener: TcpListener,
     redis_store: RedisSessionStore,
     rabbitmq_conn: lapin::Connection,
+    runtimeconfigs: RuntimeConfigs,
 ) -> Result<Server, anyhow::Error> {
     let data_pgpool = Data::new(pgpool);
     let data_rabbitmq = Data::new(rabbitmq_conn);
+    let data_runtimeconfigs = Data::new(runtimeconfigs);
     let secret_key = Key::generate();
 
     let server = actix_web::HttpServer::new(move || {
@@ -68,6 +77,7 @@ pub async fn run(
             )
             .app_data(data_pgpool.clone())
             .app_data(data_rabbitmq.clone())
+            .app_data(data_runtimeconfigs.clone())
             .route("/login", web::post().to(login))
             .route("/signup", web::post().to(signup))
             .route("/{problemID}/submit", web::post().to(submit_problem))

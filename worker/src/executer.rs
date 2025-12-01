@@ -190,18 +190,18 @@ pub async fn execute<T: TestcaseHandler>(
         let channel = conn.create_channel().await.unwrap();
         let pgpool_clone = pgpool.clone();
         let handle = tokio::spawn(async move {
-            let manager = ContainerGroup::new(docker_clone.clone(), &runtime.image)
+            let manager = ContainerGroup::new(docker_clone.clone(), &runtime.1.image)
                 .await
                 .unwrap();
             let docker_pool = Pool::builder(manager).max_size(3).build().unwrap();
-            let consumer = get_consumer(&runtime.image, &runtime.image, channel)
+            let consumer = get_consumer(&runtime.0, &runtime.0, channel)
                 .await
                 .expect("Unable to get consumer");
 
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
             tokio::select! {
-                _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.command) => {},
+                _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.1.command) => {},
                 _ = tokio::signal::ctrl_c()  => {
                     docker_pool.manager().close().await;
                 },

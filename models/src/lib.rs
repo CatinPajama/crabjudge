@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use config_loader::{ConfigType, get_configuration};
 use config_loader_derive::ConfigType;
@@ -6,12 +6,11 @@ use urlencoding::encode;
 
 #[derive(serde::Deserialize, PartialEq, Debug, ConfigType)]
 pub struct RuntimeConfigs {
-    pub runtimeconfigs: Vec<RuntimeConfig>,
+    pub runtimeconfigs: HashMap<String, RuntimeConfig>,
 }
 
 #[derive(serde::Deserialize, PartialEq, Debug)]
 pub struct RuntimeConfig {
-    pub version: Option<String>,
     pub command: String,
     pub image: String,
     pub timeout: usize,
@@ -80,6 +79,7 @@ pub struct Settings {
     pub database: DatabaseConfig,
     pub redis: RedisConfig,
     pub rabbitmq: RabbitMQConfig,
+    pub runtimeconfigs: RuntimeConfigs,
 }
 
 impl Settings {
@@ -90,6 +90,7 @@ impl Settings {
             database: get_configuration::<DatabaseConfig>(base)?,
             redis: get_configuration::<RedisConfig>(base)?,
             rabbitmq: get_configuration::<RabbitMQConfig>(base)?,
+            runtimeconfigs: get_configuration::<RuntimeConfigs>(base)?,
         })
     }
 }
