@@ -47,7 +47,6 @@ Local (dev) run (without containers):
 4. Build and run:
    - API: `cargo run -p api`
    - Worker: `cargo run -p worker`
-   - Both use [`models::Settings`](models/src/lib.rs) / config loader.
 
 <!-- Run tests:
 - API integration tests spawn ephemeral DBs and run migrations. See [api/tests/utils.rs](api/tests/utils.rs).
