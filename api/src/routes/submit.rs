@@ -11,6 +11,8 @@ use lapin::{
 };
 use models::{RuntimeConfigs, WorkerTask};
 
+use crate::routes::session::SessionAuth;
+
 #[derive(serde::Deserialize)]
 pub struct SubmitJson {
     code: String,
@@ -43,7 +45,7 @@ pub async fn submit_problem(
     runtimeconfigs: Data<RuntimeConfigs>,
 ) -> Result<HttpResponse, SubmitError> {
     // sanitize code size
-    if let Ok(Some(user_id)) = session.get::<i64>("user_id") {
+    if let Ok(Some(auth)) = session.get::<SessionAuth>("auth") {
         if !runtimeconfigs.runtimeconfigs.contains_key(&request.env) {
             return Ok(HttpResponse::BadRequest().body("Invalid environment"));
         }
@@ -53,7 +55,7 @@ pub async fn submit_problem(
         let worker_task = WorkerTask {
             code: request.code.clone(),
             problem_id,
-            user_id,
+            user_id: auth.user_id,
         };
         channel
             .exchange_declare(

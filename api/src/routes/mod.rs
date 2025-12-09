@@ -1,4 +1,7 @@
+pub mod create_problem;
 pub mod login;
+pub mod role;
+pub mod session;
 pub mod signup;
 pub mod status;
 pub mod submissions;

@@ -5,6 +5,8 @@ use actix_web::{
 };
 use sqlx::PgPool;
 
+use crate::routes::session::SessionAuth;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct SubmissionId {
     submission_id: i64,
@@ -15,7 +17,11 @@ pub async fn submissions(
     session: Session,
     path: web::Path<(i64,)>,
 ) -> impl Responder {
-    if let Ok(Some(user_id)) = session.get::<i64>("user_id") {
+    if let Ok(Some(SessionAuth {
+        user_id,
+        role: _role,
+    })) = session.get::<SessionAuth>("auth")
+    {
         let problem_id = path.into_inner().0;
 
         let row = sqlx::query_as!(

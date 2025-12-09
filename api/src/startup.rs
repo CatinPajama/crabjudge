@@ -1,5 +1,6 @@
 use std::net::TcpListener;
 
+use crate::routes::create_problem::post::create_problem;
 use crate::routes::signup;
 use crate::routes::{login, status, submissions, submit_problem};
 use actix_session::SessionMiddleware;
@@ -83,6 +84,7 @@ pub async fn run(
             .route("/{problemID}/submit", web::post().to(submit_problem))
             .route("/{submissionID}/status", web::get().to(status))
             .route("/{problemID}/submissions", web::get().to(submissions))
+            .route("/createProblem", web::post().to(create_problem))
     })
     .listen(listener)?
     .run();

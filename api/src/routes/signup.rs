@@ -8,6 +8,8 @@ use argon2::password_hash::rand_core::OsRng;
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use crate::routes::role::Role;
+
 #[derive(thiserror::Error)]
 pub enum SignupError {
     #[error("Signup Error : {0}")]
@@ -70,10 +72,12 @@ pub async fn signup(
         .map_err(|_| SignupError::Invalid(anyhow::anyhow!("Unabled to argon2 hash")))?
         .to_string();
 
+    let role: &str = Role::User.into();
     sqlx::query!(
-        r#"INSERT INTO users (username, password) VALUES ($1,$2)"#,
+        r#"INSERT INTO users (username, password, role) VALUES ($1,$2,$3)"#,
         form.username,
-        password_hash
+        password_hash,
+        role
     )
     .execute(pg_pool.as_ref())
     .await?;

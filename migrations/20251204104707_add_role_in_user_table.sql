@@ -1,0 +1,3 @@
+-- Add migration script here
+
+ALTER TABLE users ADD ROLE TEXT NOT NULL DEFAULT 'user';

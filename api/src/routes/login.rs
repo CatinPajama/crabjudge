@@ -12,6 +12,8 @@ use actix_web::{
 };
 use sqlx::PgPool;
 
+use crate::routes::{role::Role, session::SessionAuth};
+
 #[derive(thiserror::Error)]
 pub enum LoginError {
     #[error("Login Error : {0}")]
@@ -123,7 +125,7 @@ pub async fn login(
     session: Session,
 ) -> Result<HttpResponse, LoginError> {
     let row = sqlx::query!(
-        r#"SELECT user_id,password from users  WHERE username=$1 ;"#,
+        r#"SELECT user_id,password,role from users  WHERE username=$1 ;"#,
         credentials.username,
     )
     .fetch_one(pgpool.as_ref())
@@ -136,9 +138,19 @@ pub async fn login(
 
     match argon2.verify_password(credentials.password.as_bytes(), &phc) {
         Ok(_) => {
-            if let Ok(Some(_user_id)) = session.get::<i64>("user_id") {
+            if let Ok(Some(_user_id)) = session.get::<SessionAuth>("auth") {
+                session.renew();
             } else {
-                session.insert("user_id", row.user_id).unwrap();
+                let role: Role = Role::try_from(row.role.as_ref()).unwrap();
+                session
+                    .insert(
+                        "auth",
+                        SessionAuth {
+                            user_id: row.user_id,
+                            role,
+                        },
+                    )
+                    .unwrap();
             }
             Ok(HttpResponse::Ok().finish())
         }

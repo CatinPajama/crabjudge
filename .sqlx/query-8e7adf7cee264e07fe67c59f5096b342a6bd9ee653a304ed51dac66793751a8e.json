@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO problem_testcases (problem_id,testcase,output) VALUES($1,$2,$3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8e7adf7cee264e07fe67c59f5096b342a6bd9ee653a304ed51dac66793751a8e"
+}
