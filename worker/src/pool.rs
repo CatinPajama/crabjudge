@@ -1,6 +1,6 @@
 use bollard::Docker;
 use deadpool::managed::{self, Manager};
-use futures::TryStreamExt;
+use futures::{StreamExt as _, TryStreamExt};
 use tokio::sync::Mutex;
 
 use crate::docker::create_container;
@@ -29,8 +29,11 @@ impl ContainerGroup {
                 None,
                 None,
             )
-            .try_collect::<Vec<_>>()
-            .await?;
+            .for_each_concurrent(None, |stream_result| async move {
+                println!("Image creation: {:?}", stream_result);
+            })
+            .await;
+
         Ok(ContainerGroup {
             docker,
             image: environment.to_string(),

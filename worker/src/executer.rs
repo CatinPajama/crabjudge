@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::error::ExecError;
 use crate::pool::{ContainerGroup, Pool};
 use bollard::Docker;
@@ -53,8 +55,13 @@ pub async fn exec_testcase(
     testcase: &str,
     command: &str,
 ) -> Result<String, ExecError> {
-    let mut cmd: Vec<_> = command.split(' ').map(|x| x.to_string()).collect();
-    cmd.push(code.to_string());
+    let cmd = vec![
+        "sh".into(),
+        "-c".into(),
+        format!("printf '%s' \"$1\" > /tmp/file && {}", command),
+        "--".into(),
+        code.into(),
+    ];
 
     Ok(crate::docker::run_exec(&docker_task, container_id, cmd, testcase).await?)
 }
