@@ -1,14 +1,28 @@
-use bollard::{Docker, exec::StartExecResults, secret::ContainerCreateBody};
+use bollard::{
+    Docker,
+    exec::StartExecResults,
+    secret::{ContainerCreateBody, HostConfig},
+};
 use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
+
+const MEMORY_LIMIT_BYTES: i64 = 64 * 1024 * 1024;
 
 pub async fn create_container(
     docker: &Docker,
     env: &str,
 ) -> Result<String, bollard::errors::Error> {
+    let host_config = HostConfig {
+        memory: Some(MEMORY_LIMIT_BYTES),
+
+        memory_swap: Some(MEMORY_LIMIT_BYTES),
+
+        ..Default::default()
+    };
     let cfg = ContainerCreateBody {
         image: Some(env.to_string()),
         tty: Some(true),
+        host_config: Some(host_config),
         ..Default::default()
     };
 
@@ -30,12 +44,16 @@ pub async fn create_container(
     Ok(id)
 }
 
+pub struct ExecOutput {
+    pub output: String,
+    pub exit_code: i64,
+}
 pub async fn run_exec(
     docker: &Docker,
     id: &str,
     cmd: Vec<String>,
     testcase: &str,
-) -> Result<String, bollard::errors::Error> {
+) -> Result<ExecOutput, bollard::errors::Error> {
     let exec_id = docker
         .create_exec(
             id,
@@ -67,6 +85,10 @@ pub async fn run_exec(
     } else {
         // TODO handle detach case
     }
-
-    Ok(exec_output)
+    let inspect_result = docker.inspect_exec(&exec_id).await?;
+    let exit_code = inspect_result.exit_code.unwrap();
+    Ok(ExecOutput {
+        output: exec_output,
+        exit_code,
+    })
 }

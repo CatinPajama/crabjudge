@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-
+use crate::docker::ExecOutput;
 use crate::error::ExecError;
 use crate::pool::{ContainerGroup, Pool};
 use bollard::Docker;
@@ -54,7 +53,7 @@ pub async fn exec_testcase(
     code: &str,
     testcase: &str,
     command: &str,
-) -> Result<String, ExecError> {
+) -> Result<ExecOutput, ExecError> {
     let cmd = vec![
         "sh".into(),
         "-c".into(),
@@ -85,13 +84,17 @@ async fn get_consumer(
 
 enum ExecStatus {
     Passed,
-    Failed,
+    WrongAnswer,
+    MemoryLimitExceeded,
+    SegmentationFault,
 }
 impl From<ExecStatus> for &str {
     fn from(value: ExecStatus) -> Self {
         match value {
             ExecStatus::Passed => "PASSED",
-            ExecStatus::Failed => "FAILED",
+            ExecStatus::WrongAnswer => "WRONG ANSWER",
+            ExecStatus::MemoryLimitExceeded => "MEMORY LIMIT EXCEEDED",
+            ExecStatus::SegmentationFault => "Segmentation Fault",
         }
     }
 }
@@ -162,20 +165,33 @@ pub trait TestcaseHandler {
         pgpool: sqlx::Pool<sqlx::Postgres>,
         task: WorkerTask,
         row: Testcase,
-        exec_output: String,
+        exec_output: ExecOutput,
     ) -> impl std::future::Future<Output = ()> + std::marker::Send {
         async move {
+            let status: &str = match exec_output.exit_code {
+                137 => ExecStatus::MemoryLimitExceeded,
+                139 => ExecStatus::SegmentationFault,
+                _ => {
+                    if are_equal_ignore_whitespace(&exec_output.output, &row.output) {
+                        ExecStatus::Passed
+                    } else {
+                        ExecStatus::WrongAnswer
+                    }
+                }
+            }
+            /*
             let status: &str = if are_equal_ignore_whitespace(&exec_output, &row.output) {
                 ExecStatus::Passed
             } else {
                 ExecStatus::Failed
             }
+            */
             .into();
             sqlx::query!(
             "INSERT INTO submit_status (user_id, problem_id, output, status) VALUES($1,$2,$3,$4)",
             task.user_id as i64,
             task.problem_id as i64,
-            exec_output,
+            exec_output.output,
             status
         )
         .execute(&pgpool)
