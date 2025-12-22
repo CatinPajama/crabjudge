@@ -52,8 +52,15 @@ pub async fn exec_testcase(
     container_id: &str,
     code: &str,
     testcase: &str,
-    command: &str,
+    compile : &Option<String>,
+    run : &str,
+    timeout: u8,
 ) -> Result<ExecOutput, ExecError> {
+    let command = if let Some(compile) = compile {
+        format!("{} && timeout {timeout}s {}", compile, run)
+    } else {
+        format!("timeout {timeout}s {}", run)
+    };
     let cmd = vec![
         "sh".into(),
         "-c".into(),
@@ -61,6 +68,7 @@ pub async fn exec_testcase(
         "--".into(),
         code.into(),
     ];
+    println!("{:?}", cmd);
 
     Ok(crate::docker::run_exec(&docker_task, container_id, cmd, testcase).await?)
 }
@@ -87,6 +95,7 @@ enum ExecStatus {
     WrongAnswer,
     MemoryLimitExceeded,
     SegmentationFault,
+    TimeLimitExceeded,
 }
 impl From<ExecStatus> for &str {
     fn from(value: ExecStatus) -> Self {
@@ -94,7 +103,8 @@ impl From<ExecStatus> for &str {
             ExecStatus::Passed => "PASSED",
             ExecStatus::WrongAnswer => "WRONG ANSWER",
             ExecStatus::MemoryLimitExceeded => "MEMORY LIMIT EXCEEDED",
-            ExecStatus::SegmentationFault => "Segmentation Fault",
+            ExecStatus::SegmentationFault => "SEGMENTATION FAULT",
+            ExecStatus::TimeLimitExceeded => "TIME LIMIT EXCEEDED",
         }
     }
 }
@@ -104,13 +114,16 @@ async fn listen<T: TestcaseHandler>(
     pool: Pool,
     pgpool: PgPool,
     mut consumer: Consumer,
-    command: String,
+    compile : Option<String>,
+    run : String,
+    timeout: u8,
 ) {
     let mut handles = vec![];
     while let Some(delivery) = consumer.next().await {
         let delivery = delivery.unwrap();
         let docker_task = docker.clone();
-        let command = command.clone();
+        let run = run.clone();
+        let compile = compile.clone();
         let pgpool = pgpool.clone();
 
         let conn = pool.get().await.unwrap();
@@ -119,7 +132,7 @@ async fn listen<T: TestcaseHandler>(
             .unwrap();
 
         handles.push(tokio::spawn(async move {
-            handle_message::<T>(docker_task, command, pgpool, conn, task).await;
+            handle_message::<T>(docker_task, compile, run , timeout, pgpool, conn, task).await;
             let _ = delivery.ack(BasicAckOptions::default()).await;
         }));
     }
@@ -133,7 +146,9 @@ pub struct Testcase {
 
 async fn handle_message<T: TestcaseHandler>(
     docker_task: Docker,
-    command: String,
+    compile : Option<String>,
+    run: String,
+    timeout: u8,
     pgpool: sqlx::Pool<sqlx::Postgres>,
     container: Object<ContainerGroup>,
     task: WorkerTask,
@@ -152,7 +167,9 @@ async fn handle_message<T: TestcaseHandler>(
         &container.id,
         &task.code,
         &row.testcase,
-        &command,
+        &compile,
+        &run,
+        timeout,
     )
     .await
     {
@@ -171,6 +188,7 @@ pub trait TestcaseHandler {
             let status: &str = match exec_output.exit_code {
                 137 => ExecStatus::MemoryLimitExceeded,
                 139 => ExecStatus::SegmentationFault,
+                124 => ExecStatus::TimeLimitExceeded,
                 _ => {
                     if are_equal_ignore_whitespace(&exec_output.output, &row.output) {
                         ExecStatus::Passed
@@ -213,9 +231,14 @@ pub async fn execute<T: TestcaseHandler>(
         let channel = conn.create_channel().await.unwrap();
         let pgpool_clone = pgpool.clone();
         let handle = tokio::spawn(async move {
-            let manager = ContainerGroup::new(docker_clone.clone(), &runtime.1.image)
-                .await
-                .unwrap();
+            let manager = ContainerGroup::new(
+                docker_clone.clone(),
+                &runtime.1.image,
+                runtime.1.memory,
+                runtime.1.timeout,
+            )
+            .await
+            .unwrap();
             let docker_pool = Pool::builder(manager).max_size(3).build().unwrap();
             let consumer = get_consumer(&runtime.0, &runtime.0, channel)
                 .await
@@ -224,7 +247,7 @@ pub async fn execute<T: TestcaseHandler>(
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
             tokio::select! {
-                _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.1.command) => {},
+                _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.1.compile, runtime.1.run , runtime.1.timeout) => {},
                 _ = tokio::signal::ctrl_c()  => {
                     docker_pool.manager().close().await;
                 },

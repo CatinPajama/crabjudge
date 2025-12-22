@@ -12,12 +12,16 @@ pub struct ContainerGroup {
     image: String,
     docker: Docker,
     containers: Mutex<Vec<String>>,
+    pub memory: i64,
+    pub timeout: u8,
 }
 
 impl ContainerGroup {
     pub async fn new(
         docker: Docker,
         environment: &str,
+        memory: i64,
+        timeout: u8,
     ) -> Result<ContainerGroup, bollard::errors::Error> {
         docker
             .create_image(
@@ -38,6 +42,8 @@ impl ContainerGroup {
             docker,
             image: environment.to_string(),
             containers: Mutex::new(Vec::new()),
+            memory,
+            timeout,
         })
     }
     pub async fn close(&self) {
@@ -66,7 +72,7 @@ impl Manager for ContainerGroup {
     type Error = bollard::errors::Error;
 
     async fn create(&self) -> Result<Self::Type, Self::Error> {
-        let id = create_container(&self.docker, &self.image).await?;
+        let id = create_container(&self.docker, &self.image, self.memory).await?;
         self.containers.lock().await.push(id.clone());
         Ok(ContainerConn { id })
     }

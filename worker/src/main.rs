@@ -13,7 +13,7 @@ impl TestcaseHandler for DefaultTestcaseHandler {}
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let rabbitmq_settings: RabbitMQConfig =
-        get_configuration(Path::new("../configuration/")).unwrap();
+        get_configuration(Path::new("../configuration/")).expect("unable to load rabbitmq");
     let postgres_settings: DatabaseConfig =
         get_configuration(Path::new("../configuration/")).unwrap();
 

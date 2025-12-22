@@ -1,18 +1,20 @@
 runtimeconfigs:
   "python:3.12":
     image : python:3.12-slim
-    command : python /tmp/file
+    run : python /tmp/file
     timeout : 2
-    memory : 2048
+    memory : 67108864
   
   "node:20":
     image : node:20-alpine
-    command : node /tmp/file
+    run : node /tmp/file
     timeout : 2
-    memory : 2048
+    memory : 67108864
 
   "gcc":
     image : frolvlad/alpine-gcc
-    command : gcc -x c /tmp/file -o /tmp/a.out && /tmp/a.out
+    compile : gcc -x c /tmp/file -o /tmp/a.out
+    run :  /tmp/a.out
     timeout : 2
-    memory : 2048
+    memory : 67108864
+

@@ -11,10 +11,11 @@ pub struct RuntimeConfigs {
 
 #[derive(serde::Deserialize, PartialEq, Debug)]
 pub struct RuntimeConfig {
-    pub command: String,
+    pub run : String,
+    pub compile : Option<String>,
     pub image: String,
-    pub timeout: usize,
-    pub memory: usize,
+    pub timeout: u8,
+    pub memory: i64,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]

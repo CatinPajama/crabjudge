@@ -11,12 +11,13 @@ const MEMORY_LIMIT_BYTES: i64 = 64 * 1024 * 1024;
 pub async fn create_container(
     docker: &Docker,
     env: &str,
+    memory: i64,
 ) -> Result<String, bollard::errors::Error> {
+    println!("memory was {memory}");
     let host_config = HostConfig {
-        memory: Some(MEMORY_LIMIT_BYTES),
-
-        memory_swap: Some(MEMORY_LIMIT_BYTES),
-
+        memory: Some(memory),
+        memory_swap: Some(memory),
+        network_mode: Some("none".to_string()),
         ..Default::default()
     };
     let cfg = ContainerCreateBody {

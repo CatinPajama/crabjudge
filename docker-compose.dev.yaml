@@ -43,18 +43,19 @@ services:
       timeout: 10s
       retries: 5
 
-  api:
+  api-dev:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        MODE: release
-    command: ["sh", "-c", "/usr/local/bin/sqlx database create && /usr/local/bin/sqlx migrate run --source /app/migrations && api"]
+      target: runtime-dev
+    command: ["cargo-watch", "-x", "run --bin api"]
     ports:
       - "8080:8080"
+    volumes:
+      - .:/app
+      - cargo-target:/app/target
     environment:
-      DATABASE_URL: "postgres://api:123@postgres:5432/judge"
-      SQLX_OFFLINE: "true"
+      DATABASE_URL: postgres://api:123@postgres:5432/judge
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,17 +63,20 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
 
-  worker:
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    working_dir: /app
+  worker-dev:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        MODE: release
-    command: ["worker"]
+      target: runtime-dev
+    command: ["cargo-watch", "-x", "run --bin worker"]
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - cargo-target:/app/target
     environment:
       DATABASE_URL: "postgres://api:123@postgres:5432/judge"
       SQLX_OFFLINE: "true"
@@ -83,3 +87,22 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-dev
+    command: ["sqlx", "migrate", "run"]
+    environment:
+      DATABASE_URL: postgres://api:123@postgres:5432/judge
+    volumes:
+      - ./migrations:/app/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  cargo-target:
