@@ -47,6 +47,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime-prod
       args:
         MODE: release
     command: ["sh", "-c", "/usr/local/bin/sqlx database create && /usr/local/bin/sqlx migrate run --source /app/migrations && api"]
@@ -70,6 +71,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime-prod
       args:
         MODE: release
     command: ["worker"]

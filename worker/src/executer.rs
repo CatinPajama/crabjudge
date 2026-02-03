@@ -8,6 +8,8 @@ use futures_util::StreamExt;
 use lapin::{Channel, Consumer, options::*, types::FieldTable};
 use models::{RuntimeConfigs, WorkerTask};
 use sqlx::PgPool;
+use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::signal::unix::{SignalKind, signal};
 
 fn are_equal_ignore_whitespace(s1: &str, s2: &str) -> bool {
@@ -52,8 +54,8 @@ pub async fn exec_testcase(
     container_id: &str,
     code: &str,
     testcase: &str,
-    compile : &Option<String>,
-    run : &str,
+    compile: &Option<String>,
+    run: &str,
     timeout: u8,
 ) -> Result<ExecOutput, ExecError> {
     let command = if let Some(compile) = compile {
@@ -114,8 +116,8 @@ async fn listen<T: TestcaseHandler>(
     pool: Pool,
     pgpool: PgPool,
     mut consumer: Consumer,
-    compile : Option<String>,
-    run : String,
+    compile: Option<String>,
+    run: String,
     timeout: u8,
 ) {
     let mut handles = vec![];
@@ -132,7 +134,7 @@ async fn listen<T: TestcaseHandler>(
             .unwrap();
 
         handles.push(tokio::spawn(async move {
-            handle_message::<T>(docker_task, compile, run , timeout, pgpool, conn, task).await;
+            handle_message::<T>(docker_task, compile, run, timeout, pgpool, conn, task).await;
             let _ = delivery.ack(BasicAckOptions::default()).await;
         }));
     }
@@ -146,13 +148,15 @@ pub struct Testcase {
 
 async fn handle_message<T: TestcaseHandler>(
     docker_task: Docker,
-    compile : Option<String>,
+    compile: Option<String>,
     run: String,
     timeout: u8,
     pgpool: sqlx::Pool<sqlx::Postgres>,
     container: Object<ContainerGroup>,
     task: WorkerTask,
 ) {
+    let total_start = Instant::now();
+
     let row = sqlx::query_as!(
         Testcase,
         "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
@@ -175,6 +179,12 @@ async fn handle_message<T: TestcaseHandler>(
     {
         T::handle_testcase(pgpool, task, row, exec_output).await;
     }
+    let total_dur = total_start.elapsed().as_millis();
+    let ts_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    println!("Total duration: {} ms and {}", total_dur, ts_ms);
 }
 
 pub trait TestcaseHandler {
@@ -239,7 +249,7 @@ pub async fn execute<T: TestcaseHandler>(
             )
             .await
             .unwrap();
-            let docker_pool = Pool::builder(manager).max_size(3).build().unwrap();
+            let docker_pool = Pool::builder(manager).max_size(6).build().unwrap();
             let consumer = get_consumer(&runtime.0, &runtime.0, channel)
                 .await
                 .expect("Unable to get consumer");
