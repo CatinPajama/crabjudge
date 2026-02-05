@@ -24,7 +24,7 @@ pub async fn submissions(
     {
         let problem_id = path.into_inner().0;
 
-        let row = sqlx::query_as!(
+        let row: Result<_, sqlx::Error> = sqlx::query_as!(
             SubmissionId,
             "SELECT submission_id from submit_status WHERE user_id = $1 AND problem_id = $2",
             user_id,

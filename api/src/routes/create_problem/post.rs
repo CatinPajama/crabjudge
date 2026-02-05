@@ -14,6 +14,8 @@ pub struct SubmissionId {
 
 #[derive(serde::Deserialize)]
 pub struct FormData {
+    title: String,
+    difficulty: String,
     statement: String,
     testcase: String,
     output: String,
@@ -28,8 +30,10 @@ pub async fn create_problem(
         && session_auth.role >= Role::ProblemSetter
     {
         let mut transaction = pg_pool.begin().await.unwrap();
-        let row = sqlx::query!(
-            "INSERT INTO problems (statement) VALUES($1) RETURNING problem_id",
+        let row : Result<_,sqlx::Error> = sqlx::query!(
+            "INSERT INTO problems (title, difficulty, statement) VALUES($1, $2, $3) RETURNING problem_id",
+            form.title,
+            form.difficulty,
             form.statement
         )
         .fetch_one(transaction.as_mut())

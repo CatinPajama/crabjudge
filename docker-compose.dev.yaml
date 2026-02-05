@@ -48,8 +48,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime-dev
-    command: ["cargo-watch", "-x", "run --bin api --release"]
-    #command: ["cargo run --bin api --release"]
+    command: ["cargo-watch", "-x", "run --bin api"]
     ports:
       - "8080:8080"
     volumes:
@@ -72,8 +71,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime-dev
-    command: ["cargo-watch", "-x", "run --bin worker --release"]
-    # command: ["cargo run --bin worker --release"]
+    command: ["cargo-watch", "-x", "run --bin worker"]
     working_dir: /app
     volumes:
       - .:/app
@@ -81,7 +79,7 @@ services:
       - cargo-target:/app/target
     environment:
       DATABASE_URL: "postgres://api:123@postgres:5432/judge"
-      #SQLX_OFFLINE: "true"
+      SQLX_OFFLINE: "true"
     depends_on:
       postgres:
         condition: service_healthy

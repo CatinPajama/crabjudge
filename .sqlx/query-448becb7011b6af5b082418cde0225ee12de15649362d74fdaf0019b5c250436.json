@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT problem_id, title, difficulty, statement FROM problems ORDER BY problem_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "problem_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "statement",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "448becb7011b6af5b082418cde0225ee12de15649362d74fdaf0019b5c250436"
+}

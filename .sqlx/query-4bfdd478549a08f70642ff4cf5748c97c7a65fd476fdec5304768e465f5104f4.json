@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO problems (statement) VALUES($1) RETURNING problem_id",
+  "query": "INSERT INTO problems (title, difficulty, statement) VALUES($1, $2, $3) RETURNING problem_id",
   "describe": {
     "columns": [
       {
@@ -11,6 +11,8 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
+        "Text",
         "Text"
       ]
     },
@@ -18,5 +20,5 @@
       false
     ]
   },
-  "hash": "86678ae5bca6c5a564bc41e529f84c56e503029f2a4b66ad7167818f20eec2d6"
+  "hash": "4bfdd478549a08f70642ff4cf5748c97c7a65fd476fdec5304768e465f5104f4"
 }

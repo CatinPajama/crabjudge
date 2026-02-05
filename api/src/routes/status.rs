@@ -23,7 +23,7 @@ pub async fn status(
     if let Ok(Some(_auth)) = session.get::<SessionAuth>("auth") {
         let submission_id = path.into_inner().0;
 
-        let row: Result<Status, _> = sqlx::query_as!(
+        let row: Result<Status, sqlx::Error> = sqlx::query_as!(
             Status,
             "SELECT user_id,problem_id,status,output from submit_status WHERE submission_id = $1",
             submission_id

@@ -1,8 +1,8 @@
 use std::net::TcpListener;
 
 use crate::routes::create_problem::post::create_problem;
-use crate::routes::signup;
 use crate::routes::{list_problems, login, status, submissions, submit_problem};
+use crate::routes::{problem, signup};
 use actix_cors::Cors;
 use actix_session::SessionMiddleware;
 use actix_session::storage::RedisSessionStore;
@@ -70,6 +70,7 @@ pub async fn run(
     let secret_key = Key::generate();
 
     let server = actix_web::HttpServer::new(move || {
+        println!("started");
         let cors = Cors::default()
             .allowed_origin("http://127.0.0.1:5173") // Replace with your frontend's origin
             .allowed_origin("http://localhost:5173")
@@ -96,6 +97,7 @@ pub async fn run(
             .route("/signup", web::post().to(signup))
             .route("/{problemID}/submit", web::post().to(submit_problem))
             .route("/{submissionID}/status", web::get().to(status))
+            .route("/problem/{problemID}", web::get().to(problem))
             .route("/{problemID}/submissions", web::get().to(submissions))
             .route("/createProblem", web::post().to(create_problem))
             .route("/problems", web::get().to(list_problems))
