@@ -81,7 +81,7 @@ services:
       - cargo-target:/app/target
     environment:
       DATABASE_URL: "postgres://api:123@postgres:5432/judge"
-      SQLX_OFFLINE: "true"
+      #SQLX_OFFLINE: "true"
     depends_on:
       postgres:
         condition: service_healthy

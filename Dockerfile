@@ -17,7 +17,7 @@ RUN cargo build --workspace --release
 
 
 FROM chef AS builder-dev
-ENV SQLX_OFFLINE true
+#ENV SQLX_OFFLINE true
 RUN cargo install cargo-watch
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --recipe-path recipe.json
