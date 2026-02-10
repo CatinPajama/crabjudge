@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT submission_id from submit_status WHERE user_id = $1 AND problem_id = $2",
+  "query": "INSERT INTO submit_status (user_id, problem_id) VALUES ($1,$2) RETURNING submission_id",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       false
     ]
   },
-  "hash": "a3c368a06e270582352b1f95061f137e1b184e6bb5ac2099dbe49440209f1440"
+  "hash": "7796e5886096b7f7c8c26b3ed5043d892509e9fb24ef7efdea9b837313be530f"
 }

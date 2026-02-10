@@ -1,7 +1,7 @@
 use std::net::TcpListener;
 
 use crate::routes::create_problem::post::create_problem;
-use crate::routes::{list_problems, login, status, submissions, submit_problem};
+use crate::routes::{list_problems, login, stats, status, submissions, submit_problem};
 use crate::routes::{problem, signup};
 use actix_cors::Cors;
 use actix_session::SessionMiddleware;
@@ -101,6 +101,7 @@ pub async fn run(
             .route("/{problemID}/submissions", web::get().to(submissions))
             .route("/createProblem", web::post().to(create_problem))
             .route("/problems", web::get().to(list_problems))
+            .route("/stats", web::get().to(stats))
     })
     .listen(listener)?
     .run();

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT difficulty, count(DISTINCT s.problem_id) FROM submit_status s INNER JOIN problems p on s.problem_id = p.problem_id WHERE status=$2 AND user_id = $1 GROUP BY difficulty",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "difficulty",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "e2a4fce0f0ccc3ed3ae78e2ee54c98598d21514324585698be8483d3528074c1"
+}

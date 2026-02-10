@@ -1,6 +1,6 @@
 use bollard::Docker;
 use deadpool::managed::{self, Manager};
-use futures::{StreamExt as _, TryStreamExt};
+use futures::StreamExt as _;
 use tokio::sync::Mutex;
 
 use crate::docker::create_container;

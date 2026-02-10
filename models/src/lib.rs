@@ -11,8 +11,8 @@ pub struct RuntimeConfigs {
 
 #[derive(serde::Deserialize, PartialEq, Debug)]
 pub struct RuntimeConfig {
-    pub run : String,
-    pub compile : Option<String>,
+    pub run: String,
+    pub compile: Option<String>,
     pub image: String,
     pub timeout: u8,
     pub memory: i64,
@@ -23,6 +23,7 @@ pub struct WorkerTask {
     pub code: String,
     pub problem_id: i64,
     pub user_id: i64,
+    pub submission_id: i64,
 }
 
 #[derive(serde::Deserialize, PartialEq, Debug, ConfigType)]
@@ -93,5 +94,24 @@ impl Settings {
             rabbitmq: get_configuration::<RabbitMQConfig>(base)?,
             runtimeconfigs: get_configuration::<RuntimeConfigs>(base)?,
         })
+    }
+}
+
+pub enum ExecStatus {
+    Passed,
+    WrongAnswer,
+    MemoryLimitExceeded,
+    SegmentationFault,
+    TimeLimitExceeded,
+}
+impl From<ExecStatus> for &str {
+    fn from(value: ExecStatus) -> Self {
+        match value {
+            ExecStatus::Passed => "PASSED",
+            ExecStatus::WrongAnswer => "WRONG ANSWER",
+            ExecStatus::MemoryLimitExceeded => "MEMORY LIMIT EXCEEDED",
+            ExecStatus::SegmentationFault => "SEGMENTATION FAULT",
+            ExecStatus::TimeLimitExceeded => "TIME LIMIT EXCEEDED",
+        }
     }
 }

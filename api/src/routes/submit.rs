@@ -10,6 +10,8 @@ use lapin::{
     types::FieldTable,
 };
 use models::{RuntimeConfigs, WorkerTask};
+use serde_json::json;
+use sqlx::PgPool;
 
 use crate::routes::session::SessionAuth;
 
@@ -24,6 +26,9 @@ pub enum SubmitError {
     #[error("{0}")]
     QueueError(#[from] lapin::Error),
 
+    #[error("{0}")]
+    DatabaseError(#[from] sqlx::Error),
+
     #[error("No such environment {0}")]
     InvalidEnvironment(String),
 }
@@ -33,6 +38,7 @@ impl ResponseError for SubmitError {
         match self {
             Self::InvalidEnvironment(env) => HttpResponse::BadRequest().body(env.clone()),
             Self::QueueError(e) => HttpResponse::InternalServerError().body(e.to_string()),
+            Self::DatabaseError(e) => HttpResponse::InternalServerError().body(e.to_string()),
         }
     }
 }
@@ -43,6 +49,7 @@ pub async fn submit_problem(
     conn: Data<lapin::Connection>,
     session: Session,
     runtimeconfigs: Data<RuntimeConfigs>,
+    pg_pool: Data<PgPool>,
 ) -> Result<HttpResponse, SubmitError> {
     // sanitize code size
     if let Ok(Some(auth)) = session.get::<SessionAuth>("auth") {
@@ -52,10 +59,19 @@ pub async fn submit_problem(
         let problem_id = path.into_inner().0;
         let channel = conn.create_channel().await?;
 
+        let submission_id = sqlx::query!(
+            r#"INSERT INTO submit_status (user_id, problem_id) VALUES ($1,$2) RETURNING submission_id"#,
+            auth.user_id,
+            problem_id,
+        )
+        .fetch_one(pg_pool.as_ref())
+        .await?.submission_id;
+
         let worker_task = WorkerTask {
             code: request.code.clone(),
             problem_id,
             user_id: auth.user_id,
+            submission_id,
         };
         channel
             .exchange_declare(
@@ -74,7 +90,9 @@ pub async fn submit_problem(
                 BasicProperties::default(),
             )
             .await?;
-        Ok(HttpResponse::Ok().body(format!("Submitting problem with ID: {}", problem_id)))
+        Ok(HttpResponse::Ok().json(json!({
+            "submission_id" : submission_id
+        })))
     } else {
         Ok(HttpResponse::Unauthorized().finish())
     }

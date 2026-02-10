@@ -1,8 +1,10 @@
+use std::cmp::max;
+
 use actix_web::{
     HttpResponse, Responder,
     web::{self, Data},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 #[derive(Serialize)]
@@ -13,10 +15,27 @@ struct Problem {
     statement: String,
 }
 
-pub async fn list_problems(pg_pool: Data<PgPool>) -> impl Responder {
+#[derive(Deserialize)]
+pub struct Pagination {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+pub async fn list_problems(
+    pg_pool: Data<PgPool>,
+    pagination: web::Query<Pagination>,
+) -> impl Responder {
+    let limit = if let Some(limit) = pagination.limit {
+        max(limit, 50)
+    } else {
+        50
+    };
+    let offset = pagination.offset.unwrap_or_default();
     let rows: Result<_, sqlx::Error> = sqlx::query_as!(
         Problem,
-        "SELECT problem_id, title, difficulty, statement FROM problems ORDER BY problem_id"
+        "SELECT problem_id, title, difficulty, statement FROM problems ORDER BY problem_id LIMIT $1 OFFSET $2",
+        limit,
+        offset
     )
     .fetch_all(pg_pool.as_ref())
     .await;

@@ -13,7 +13,7 @@ struct Status {
     user_id: i64,
     problem_id: i64,
     status: String,
-    output: String,
+    output: Option<String>,
 }
 pub async fn status(
     path: web::Path<(i64,)>,

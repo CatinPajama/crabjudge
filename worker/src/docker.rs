@@ -6,8 +6,6 @@ use bollard::{
 use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 
-const MEMORY_LIMIT_BYTES: i64 = 64 * 1024 * 1024;
-
 pub async fn create_container(
     docker: &Docker,
     env: &str,

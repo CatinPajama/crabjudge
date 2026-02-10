@@ -6,7 +6,7 @@ use deadpool::managed::Object;
 use futures::future::join_all;
 use futures_util::StreamExt;
 use lapin::{Channel, Consumer, options::*, types::FieldTable};
-use models::{RuntimeConfigs, WorkerTask};
+use models::{ExecStatus, RuntimeConfigs, WorkerTask};
 use sqlx::PgPool;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,25 +90,6 @@ async fn get_consumer(
             FieldTable::default(),
         )
         .await
-}
-
-enum ExecStatus {
-    Passed,
-    WrongAnswer,
-    MemoryLimitExceeded,
-    SegmentationFault,
-    TimeLimitExceeded,
-}
-impl From<ExecStatus> for &str {
-    fn from(value: ExecStatus) -> Self {
-        match value {
-            ExecStatus::Passed => "PASSED",
-            ExecStatus::WrongAnswer => "WRONG ANSWER",
-            ExecStatus::MemoryLimitExceeded => "MEMORY LIMIT EXCEEDED",
-            ExecStatus::SegmentationFault => "SEGMENTATION FAULT",
-            ExecStatus::TimeLimitExceeded => "TIME LIMIT EXCEEDED",
-        }
-    }
 }
 
 async fn listen<T: TestcaseHandler>(
@@ -215,16 +196,16 @@ pub trait TestcaseHandler {
             }
             */
             .into();
+            println!("task submission id is {}", task.submission_id);
             sqlx::query!(
-            "INSERT INTO submit_status (user_id, problem_id, output, status) VALUES($1,$2,$3,$4)",
-            task.user_id as i64,
-            task.problem_id as i64,
-            exec_output.output,
-            status
-        )
-        .execute(&pgpool)
-        .await
-        .unwrap();
+                "UPDATE submit_status SET output=$1, status=$2 WHERE submission_id=$3",
+                exec_output.output,
+                status,
+                task.submission_id,
+            )
+            .execute(&pgpool)
+            .await
+            .unwrap();
         }
     }
 }

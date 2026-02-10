@@ -1,36 +1,29 @@
 use actix_session::Session;
-use actix_web::{
-    HttpResponse, Responder,
-    web::{self, Data},
-};
+use actix_web::{HttpResponse, Responder, web::Data};
+use models::ExecStatus;
+use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::routes::session::SessionAuth;
 
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct SubmissionId {
-    submission_id: i64,
-    status: String,
-    output: Option<String>,
+#[derive(Serialize)]
+struct Stats {
+    difficulty: String,
+    count: Option<i64>,
 }
 
-pub async fn submissions(
-    pg_pool: Data<PgPool>,
-    session: Session,
-    path: web::Path<(i64,)>,
-) -> impl Responder {
+pub async fn stats(pg_pool: Data<PgPool>, session: Session) -> impl Responder {
     if let Ok(Some(SessionAuth {
         user_id,
         role: _role,
     })) = session.get::<SessionAuth>("auth")
     {
-        let problem_id = path.into_inner().0;
-
+        let pass: &str = ExecStatus::Passed.into();
         let row: Result<_, sqlx::Error> = sqlx::query_as!(
-            SubmissionId,
-            "SELECT submission_id, status, output from submit_status WHERE user_id = $1 AND problem_id = $2",
+            Stats,
+            "SELECT difficulty, count(DISTINCT s.problem_id) FROM submit_status s INNER JOIN problems p on s.problem_id = p.problem_id WHERE status=$2 AND user_id = $1 GROUP BY difficulty",
             user_id,
-            problem_id
+            pass
         )
         .fetch_all(pg_pool.as_ref())
         .await;

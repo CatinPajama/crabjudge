@@ -1,40 +1,35 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT user_id,problem_id,status,output from submit_status WHERE submission_id = $1",
+  "query": "SELECT submission_id, status, output from submit_status WHERE user_id = $1 AND problem_id = $2",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "user_id",
+        "name": "submission_id",
         "type_info": "Int8"
       },
       {
         "ordinal": 1,
-        "name": "problem_id",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 2,
         "name": "status",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "output",
         "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
+        "Int8",
         "Int8"
       ]
     },
     "nullable": [
       false,
       false,
-      false,
       true
     ]
   },
-  "hash": "fb3b4e01be9a5c339e654282e8f9f5a4241bc8d0bc67898c58560620c7c6c189"
+  "hash": "4564ab4a97de0edf9929d45a23473f881ea39b2802ec3fecf1282792e809ac81"
 }
