@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::cmp::min;
 
 use actix_web::{
     HttpResponse, Responder,
@@ -26,7 +26,7 @@ pub async fn list_problems(
     pagination: web::Query<Pagination>,
 ) -> impl Responder {
     let limit = if let Some(limit) = pagination.limit {
-        max(limit, 50)
+        min(limit, 50)
     } else {
         50
     };

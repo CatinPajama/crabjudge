@@ -1,108 +1,259 @@
 # CrabJudge
 
-CrabJudge is a simple online judge prototype written in Rust. It consists of an HTTP API, a worker that executes submitted code inside Docker containers, and shared models + configuration utilities.
+CrabJudge is an online judge prototype written in Rust. It consists of an HTTP API that handles user authentication and code submissions, a worker that executes submitted code inside Docker containers with resource limits, and shared models + configuration utilities.
 
-This README covers repository layout, architecture, setup, system design, and API endpoints with links to key source files and symbols.
+---
+## Overview / System Design
 
-## Overview / System design
+### Components
 
-Components:
-- API: receives signup/login and submit requests and enqueues tasks into RabbitMQ. 
-- Worker: listens on RabbitMQ exchanges (one per runtime) and runs incoming tasks in container pool.
-- Container manager / pool: creates Docker images and reuses running containers. 
-- Execution: actual code run uses Docker exec attaching STDIN/STDOUT.
-- Configuration loader: typed config based on YAML + env.
+1. **API** (Actix-web)
+   - Handles signup/login with Argon2 password hashing
+   - Session management via Redis
+   - Receives code submissions and publishes tasks to RabbitMQ
+   - Routes: `/signup`, `/login`, `/{problemID}/submit`, `/{submissionID}/status`, etc.
 
-Message flow (high level):
-1. Client calls POST /{problemID}/submit (API) → handler 
-2. API validates session + environment and publishes a JSON  to the exchange named after the runtime (example: `python:3.12`).
-3. Worker (one per runtime config) consumes messages from its queue, uses a Container Pool to obtain a container, and runs the submission 
-4. Worker compares output and writes a row into `submit_status` table.
+2. **Worker** (Tokio async runtime)
+   - Spawns one listener per runtime (e.g., python:3.12, node:20, gcc)
+   - Consumes messages from RabbitMQ exchanges
+   - Uses a deadpool-based container pool to reuse Docker containers
+   - Executes code with STDIN/STDOUT and enforces timeouts/memory limits
+   - Writes results to `submit_status` table
+
+3. **Container Manager / Pool**
+   - Creates Docker containers from images on startup (once per runtime)
+   - Reuses containers via deadpool's `Manager` trait
+   - Tracks created container IDs and performs best-effort cleanup on shutdown
+   - Supports configurable memory limits and timeout per runtime
+
+4. **Docker Execution**
+   - Uses Docker API (via bollard crate) to exec commands inside containers
+   - Pipes user code to stdin, captures stdout/stderr
+   - Records exit codes (137=OOM, 139=SIGSEGV, 124=timeout, etc.)
+
+5. **Configuration Loader**
+   - Loads YAML configs from `configuration/<env>/` (default: `local`)
+   - Override via env vars with prefix `CRABJUDGE_<configname>_<key>`
+   - Config is strongly typed (uses proc macros to derive names)
+
+### Message Flow
+
+```
+1. Client calls POST /{problemID}/submit (API)
+   ↓
+2. API validates session & environment, creates submit_status row
+   ↓
+3. API publishes WorkerTask JSON to RabbitMQ exchange named by runtime key (e.g., "python:3.12")
+   ↓
+4. Worker consumes message from queue, obtains container from pool
+   ↓
+5. Worker fetches testcase from DB, executes code in container with timeout/memory limits
+   ↓
+6. Worker compares output, writes status + output to submit_status row
+   ↓
+7. Client queries GET /{submissionID}/status to retrieve result
+```
 
 
 ## Configuration
 
-Configs are loaded from `configuration/<env>/` (default env `local`). To override, use environment variables with prefix `CRABJUDGE_<configname>_<key>`
+All configs are loaded from `configuration/<env>/` (default env is `local`). Files are YAML-based:
 
-## Setup (local development)
+- `apiconfig.yaml` — API host & port
+- `databaseconfig.yaml` — PostgreSQL connection details
+- `redisconfig.yaml` — Redis host & port (for sessions)
+- `rabbitmqconfig.yaml` — RabbitMQ connection details
+- `runtimeconfigs.yaml` — Per-runtime configs (image, compile cmd, run cmd, timeout, memory)
 
-Prerequisite:
-- Docker and docker daemon running (worker uses host Docker socket).
-- Rust toolchain (stable) and cargo.
-- sqlx-cli for database migrations (installed in Dockerfile during build and used by scripts).
-- Docker Compose (optional) for running full stack.
+To override, set environment variables with prefix `CRABJUDGE_<lowercase_config_name>_<key>`. Example:
+```bash
+CRABJUDGE_DATABASE_USER=myuser CRABJUDGE_DATABASE_PASSWORD=mypass cargo run -p api
+```
 
-Quick start with docker-compose (recommended for integration):
-1. Start services:
-   - docker-compose up --build
-   - This brings up `postgres`, `redis`, `rabbitmq`, `api`, and `worker` as configured in [docker-compose.yaml](docker-compose.yaml).
-2. API's container runs migrations at startup (see compose command).
+See [configuration/local/](configuration/local/) for examples.
 
-Local (dev) run (without containers):
-1. Start Postgres / Redis / RabbitMQ locally or via docker.
-2. Ensure DATABASE_URL and SQLX_OFFLINE (optional) are set. Example `.env.sample` provided.
-3. Run DB migrations:
-   - Install sqlx-cli (or use Docker image with it).
-   - Run `sqlx database create` and `sqlx migrate run` (migrations folder is [migrations/](migrations/)).
-4. Build and run:
-   - API: `cargo run -p api`
-   - Worker: `cargo run -p worker`
+---
 
-<!-- Run tests:
-- API integration tests spawn ephemeral DBs and run migrations. See [api/tests/utils.rs](api/tests/utils.rs).
-- Worker unit/integration test: [worker/tests/verify_output.rs](worker/tests/verify_output.rs) uses Docker to create a Python container and run code.
+## Setup (Local Development)
 
-Useful commands:
-- Build workspace: cargo build --workspace
-- Run API: cargo run -p api
-- Run Worker: cargo run -p worker
-- Run tests: cargo test --workspace -->
+### Prerequisites
+
+- Docker and Docker daemon running (worker uses host socket at `/var/run/docker.sock`)
+- Rust toolchain (stable) and cargo
+- sqlx-cli (installed in Dockerfile, can be installed locally: `cargo install sqlx-cli --no-default-features --features postgres`)
+- Docker Compose (optional, for full-stack runs)
+
+### Quick Start with Docker Compose (Recommended)
+
+```bash
+docker-compose up --build
+```
+
+This brings up:
+- PostgreSQL (port 5432)
+- Redis (port 6379)
+- RabbitMQ (port 5672 + management UI on 15672)
+- API (port 8080)
+- Worker (listens on RabbitMQ, uses host Docker socket)
+
+The API container runs migrations automatically at startup.
+
+### Local Dev Run (Without Containers)
+
+1. Start services locally or via docker:
+   ```bash
+   docker run -d --name postgres -e POSTGRES_PASSWORD=123 -e POSTGRES_DB=judge -p 5432:5432 postgres
+   docker run -d --name redis -p 6379:6379 redis
+   docker run -d --name rabbitmq -e RABBITMQ_DEFAULT_USER=guest -e RABBITMQ_DEFAULT_PASS=guest -p 5672:5672 rabbitmq:4-management
+   ```
+
+2. Set environment variables:
+   ```bash
+   export DATABASE_URL="postgres://api:123@localhost:5432/judge"
+   export SQLX_OFFLINE=true
+   ```
+
+3. Run migrations:
+   ```bash
+   sqlx database create
+   sqlx migrate run
+   ```
+
+4. Run API and Worker in separate terminals:
+   ```bash
+   cargo run -p api
+   cargo run -p worker
+   ```
+
+### Running Tests
+
+```bash
+# API integration tests (spawn ephemeral DBs)
+cargo test -p api
+
+# Worker integration test (uses Docker to create Python container)
+cargo test -p worker
+```
 
 ---
 
 ## API Endpoints
 
+### POST /signup
+- **Body:** Form fields `username`, `password`
+- **Response:** 200 OK on success, 400 on invalid input, 500 on DB error
+- **Behavior:** Creates a user with Argon2-hashed password, role defaults to "user"
 
-1. POST /signup
-   - Body: form fields `username`, `password`
-   - Response: 200 OK on success, 400 on invalid, 500 on DB error
-   - Creates a user with Argon2 hashed password.
+### POST /login
+- **Auth:** Basic auth header (base64(username:password))
+- **Response:**
+  - 200 OK on success (inserts session into Redis)
+  - 401 Unauthorized on bad credentials
+  - 400 Bad Request on invalid input
+- **Behavior:** Session contains user_id and role
 
-2. POST /login
-   - Authentication: Basic auth header (username:password)
-   - Response:
-     - 200 OK on success (session "user_id" inserted)
-     - 401 Unauthorized on bad credentials
-     - 400 Bad Request with cookie `login_error` on invalid input
+### POST /{problemID}/submit
+- **Auth:** Requires session (user logged in)
+- **Body (JSON):** `{ "code": "<source_code>", "env": "<runtime_key>" }`
+- **Response:** 
+  - 200 OK with `{ "submission_id": <id> }` on success
+  - 400 if invalid env, 401 if not logged in, 500 on DB/queue error
+- **Behavior:**
+  - Validates `env` against loaded runtime configs
+  - Creates `submit_status` row with status='PENDING'
+  - Publishes [`WorkerTask`](models/src/lib.rs) JSON to RabbitMQ exchange named by `env`
 
-3. POST /{problemID}/submit
-   - Auth: requires session (user logged in)
-   - Body (JSON):
-     - { "code": "<source>", "env": "<runtime_key>" }
-   - Behavior:
-     - Validates env against loaded config.
-     - Publishes a Task to the RabbitMQ exchange named by env.
-   - Response: 200 OK on enqueue, 400 if invalid env, 401 if not logged in
+### GET /{submissionID}/status
+- **Auth:** Requires session
+- **Response:** JSON with `{ user_id, problem_id, status, output }`
+- **Behavior:** Fetches latest submission status from DB
 
-4. GET /{submissionID}/status
-   - Auth: requires session
-   - Response: JSON with { user_id, problem_id, status, output }
+### GET /{problemID}/submissions
+- **Auth:** Requires session
+- **Response:** List of submission IDs for the current user/problem
+- **Query:** Filters by user_id and problem_id
 
-5. GET /{problemID}/submissions
-   - Auth: requires session
-   - Response: list of submission ids for the user/problem
+### GET /problem/{problemID}
+- **Auth:** None
+- **Response:** JSON with `{ problem_id, title, difficulty, statement }`
+
+### GET /problems
+- **Auth:** None
+- **Query params:** `?limit=<n>&offset=<m>` (default limit=50)
+- **Response:** Paginated list of problems
+
+### GET /stats
+- **Auth:** Requires session
+- **Response:** User's passing stats by difficulty (count of distinct problems solved)
+
+### POST /createProblem
+- **Auth:** Requires session + ProblemSetter or Admin role
+- **Body:** Form fields `title`, `difficulty`, `statement`, `testcase`, `output`
+- **Response:** 200 OK on success, 401 if unauthorized, 500 on error
 
 ---
 
+## Runtime Configuration
 
-## Extending / adding runtimes
+Add runtimes in [configuration/local/runtimeconfigs.yaml](configuration/local/runtimeconfigs.yaml):
 
-1. Add runtime config in [configuration/local/runtimeconfigs.yaml](configuration/local/runtimeconfigs.yaml).
-2. Ensure the image is pullable (Docker Hub or private).
-3. The API will publish to the exchange named by the runtime key; Worker spawn per runtime and listens for messages on the queue/exchange pair.
+```yaml
+runtimeconfigs:
+  "python:3.12":
+    image: python:3.12-slim
+    run: python /tmp/file
+    compile: null           # optional
+    timeout: 2              # seconds
+    memory: 67108864        # bytes (64 MB)
+  
+  "gcc":
+    image: frolvlad/alpine-gcc
+    compile: gcc -x c /tmp/file -o /tmp/a.out
+    run: /tmp/a.out
+    timeout: 2
+    memory: 67108864
+```
+
+The key (e.g., "python:3.12") is the exchange name; the image is pulled by the worker on startup.
 
 ---
 
-## Migrations & DB
+## Design Notes & Improvements
 
-Migrations live in [migrations/](migrations/). They define `users`, `problems`, `problem_testcases`, and `submit_status`. The API tests and the docker-compose setup run migrations automatically.
+### Current Strengths
+- Clean separation: API enqueues, Worker executes, DB persists
+- Async/concurrent execution via Tokio
+- Resource limits enforced at container level (memory, timeout)
+- Session management via Redis
+- Graceful shutdown with container cleanup
+- Composable runtime configs (easy to add languages)
+
+### Known Limitations & TODOs
+
+1. **Error Handling**: Some `.unwrap()` calls in task handlers could leak resources on panic. Should use proper error propagation with error tracking for observability.
+
+2. **Queue Acking**: Tasks are acked after completion (with potential loss on worker crash). Consider acking only after successful DB insert.
+
+3. **Image Cleanup**: Pulled images are not removed on shutdown. Consider adding a prune mechanism for long-running deployments.
+
+
+4. **Logging & Observability**: Add structured logging (tracing/tokio-console) for better debugging and performance profiling.
+
+---
+
+## Extending
+
+### Adding a New Runtime
+
+1. Add entry to [configuration/local/runtimeconfigs.yaml](configuration/local/runtimeconfigs.yaml):
+   ```yaml
+   "ruby:3.2":
+     image: ruby:3.2-slim
+     run: ruby /tmp/file
+     timeout: 2
+     memory: 67108864
+   ```
+
+2. Ensure the Docker image is pullable (public or in your registry).
+
+3. The API will auto-publish to exchange "ruby:3.2"; worker will spawn a listener and process tasks.
