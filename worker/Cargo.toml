@@ -11,21 +11,19 @@ name = "worker"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = {workspace = true}
+anyhow = { workspace = true }
 bollard = "0.19.3"
-config = {workspace = true}
-config_loader = { version = "0.1.0", path = "../config_loader" }
+config = { workspace = true }
 deadpool = "0.12.3"
 futures = "0.3.31"
 futures-util = "0.3.31"
-lapin = {workspace = true}
+lapin = { workspace = true }
 models = { version = "0.1.0", path = "../models" }
-serde = {workspace = true}
-serde_json = {workspace = true}
-thiserror = {workspace = true}
-tokio = {workspace = true}
-sqlx = {workspace = true}
-
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
 
 
 [dev-dependencies]

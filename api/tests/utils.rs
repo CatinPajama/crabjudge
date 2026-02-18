@@ -1,5 +1,5 @@
 use actix_session::storage::RedisSessionStore;
-use models::Settings;
+use models::ApiSettings;
 use sqlx::{Connection, Executor, PgConnection, PgPool, postgres::PgConnectOptions};
 use std::net::TcpListener;
 use uuid::Uuid;
@@ -11,7 +11,7 @@ pub struct TestApp {
 pub async fn spawn_app() -> TestApp {
     let listener = TcpListener::bind("127.0.0.1:0").expect("Unable to start tcp listener");
 
-    let settings = Settings::get_configuration().expect("Unable to read configuration files");
+    let settings = ApiSettings::get_configuration().expect("Unable to read configuration files");
     let pg_options = PgConnectOptions::new()
         .database("postgres")
         .username(&settings.database.user)

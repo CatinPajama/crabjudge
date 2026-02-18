@@ -11,7 +11,6 @@ pub async fn create_container(
     env: &str,
     memory: i64,
 ) -> Result<String, bollard::errors::Error> {
-    println!("memory was {memory}");
     let host_config = HostConfig {
         memory: Some(memory),
         memory_swap: Some(memory),

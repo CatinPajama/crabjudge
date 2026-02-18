@@ -1,5 +1,6 @@
 use std::net::TcpListener;
 
+use crate::ApiSettings;
 use crate::routes::create_problem::post::create_problem;
 use crate::routes::{
     list_problems, login, signup_confirmation, stats, status, submissions, submit_problem,
@@ -14,8 +15,8 @@ use actix_web::{
     dev::Server,
     web::{self, Data},
 };
+use models::RuntimeConfigs;
 use models::email::EmailClient;
-use models::{RuntimeConfigs, Settings};
 use sqlx::PgPool;
 
 #[allow(dead_code)]
@@ -26,7 +27,7 @@ pub struct Application {
 }
 
 impl Application {
-    pub async fn build(settings: Settings) -> Result<Self, anyhow::Error> {
+    pub async fn build(settings: ApiSettings) -> Result<Self, anyhow::Error> {
         let address = format!(
             "{}:{}",
             settings.application.host, settings.application.port
@@ -91,9 +92,8 @@ pub async fn run(
     let secret_key = Key::generate();
 
     let server = actix_web::HttpServer::new(move || {
-        println!("started");
         let cors = Cors::default()
-            .allowed_origin("http://127.0.0.1:5173") // Replace with your frontend's origin
+            .allowed_origin("http://127.0.0.1:5173")
             .allowed_origin("http://localhost:5173")
             .allowed_methods(vec!["GET", "POST"])
             .allowed_headers(&[

@@ -5,7 +5,7 @@ use lapin::{
     options::{BasicConsumeOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions},
     types::FieldTable,
 };
-use models::{Settings, WorkerTask};
+use models::{ApiSettings, WorkerTask};
 use std::collections::HashMap;
 use utils::spawn_app;
 
@@ -13,7 +13,7 @@ use utils::spawn_app;
 async fn send_code() {
     let app = spawn_app().await;
 
-    let settings = Settings::get_configuration().unwrap();
+    let settings = ApiSettings::get_configuration().unwrap();
     let conn =
         lapin::Connection::connect(&settings.rabbitmq.url(), ConnectionProperties::default())
             .await

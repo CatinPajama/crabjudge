@@ -3,14 +3,12 @@ services:
     image: postgres:latest
     container_name: crabjudge_postgres
     restart: always
-    environment:
-      POSTGRES_USER: api
-      POSTGRES_PASSWORD: 123
-      POSTGRES_DB: judge
+    env_file:
+      - .env
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U api -d judge"]
+      test: [ "CMD-SHELL", "pg_isready -U api -d judge" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -19,43 +17,50 @@ services:
     image: redis:latest
     container_name: crabjudge_redis
     restart: always
+    env_file:
+      - .env
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      test: [ "CMD-SHELL", "redis-cli ping | grep PONG" ]
       interval: 5s
       timeout: 5s
       retries: 5
 
   rabbitmq:
+    env_file:
+      - .env
     image: rabbitmq:4-management
     container_name: crabjudge_rabbitmq
     restart: always
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+
     ports:
       - "5672:5672"
       - "15672:15672"
     healthcheck:
-      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      test: [ "CMD-SHELL", "rabbitmq-diagnostics -q ping" ]
       interval: 5s
       timeout: 10s
       retries: 5
 
   api:
+    env_file:
+      - .env
     build:
       context: .
       dockerfile: Dockerfile
       target: runtime-prod
       args:
         MODE: release
-    command: ["sh", "-c", "/usr/local/bin/sqlx database create && /usr/local/bin/sqlx migrate run --source /app/migrations && api"]
+    command: [ "sh", "-c", "/usr/local/bin/sqlx migrate run --source /app/migrations && api" ]
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: "postgres://api:123@postgres:5432/judge"
-      SQLX_OFFLINE: "true"
+      - CRABJUDGE_DATABASE__HOST=postgres
+      - CRABJUDGE_REDIS__HOST=redis
+      - CRABJUDGE_RABBITMQ__HOST=rabbitmq
+      - DATABASE_URL=postgres://api:123@postgres:5432/judge
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,19 +70,22 @@ services:
         condition: service_healthy
 
   worker:
+    env_file:
+      - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app
+    environment:
+      - CRABJUDGE_DATABASE__HOST=postgres
+      - CRABJUDGE_REDIS__HOST=redis
+      - CRABJUDGE_RABBITMQ__HOST=rabbitmq
     build:
       context: .
       dockerfile: Dockerfile
       target: runtime-prod
       args:
         MODE: release
-    command: ["worker"]
-    environment:
-      DATABASE_URL: "postgres://api:123@postgres:5432/judge"
-      SQLX_OFFLINE: "true"
+    command: [ "worker" ]
     depends_on:
       postgres:
         condition: service_healthy

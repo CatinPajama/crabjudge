@@ -4,12 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde = {workspace = true}
-config_loader_derive = {path = "../config_loader_derive/"}
-config_loader = {path = "../config_loader"}
-config = {workspace = true}
+serde = { workspace = true }
+config = { workspace = true }
 urlencoding = "2.1.3"
-validator = {workspace = true}
-reqwest = {workspace = true}
-tokio = {workspace = true}
-
+validator = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }

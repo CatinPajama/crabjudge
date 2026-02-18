@@ -175,7 +175,7 @@ async fn handle_message<T: TestcaseHandler>(
             T::handle_testcase(pgpool, task, row, exec_output).await;
         }
         Err(e) => {
-            println!("ERROROROOR : {}", e);
+            println!("Error executing : {}", e);
         }
     }
 
@@ -236,7 +236,7 @@ pub async fn execute<T: TestcaseHandler>(
     docker: Docker,
 ) {
     let mut handles = vec![];
-    for runtime in runtimeconfigs.runtimeconfigs {
+    for runtime in runtimeconfigs.0 {
         let docker_clone = docker.clone();
         let channel = conn.create_channel().await.unwrap();
         let pgpool_clone = pgpool.clone();

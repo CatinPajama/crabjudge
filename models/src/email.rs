@@ -1,11 +1,18 @@
-use std::path::Path;
-
-use config_loader::{ConfigType, get_configuration};
-use config_loader_derive::ConfigType;
 use reqwest::Client;
 use validator::ValidateEmail;
 
-use crate::EmailClientConfig;
+#[derive(serde::Deserialize, Debug)]
+pub struct EmailClientConfig {
+    pub base_url: String,
+    pub sender_email: String,
+    pub authorization_token: String,
+}
+impl EmailClientConfig {
+    pub fn sender(&self) -> Result<SubscriberEmail, String> {
+        SubscriberEmail::parse(self.sender_email.clone())
+    }
+}
+
 #[derive(Debug)]
 pub struct SubscriberEmail(String);
 
@@ -99,24 +106,4 @@ struct SendEmailSender<'a> {
 #[derive(serde::Serialize)]
 struct SendEmailReceiver<'a> {
     email: &'a str,
-}
-
-#[tokio::test]
-async fn test_email() {
-    let email_client_config =
-        get_configuration::<EmailClientConfig>(Path::new("../configuration")).unwrap();
-    let client = EmailClient::new(
-        email_client_config.base_url.clone(),
-        email_client_config.sender().unwrap(),
-        email_client_config.authorization_token,
-    );
-    client
-        .send_email(
-            SubscriberEmail::parse("grb.khtry@gmail.com".to_string()).unwrap(),
-            "test",
-            "<h1>Hello</h1>",
-            "hello",
-        )
-        .await
-        .unwrap();
 }

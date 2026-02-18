@@ -1,6 +1,0 @@
-user: api
-password: "123"
-host: postgres
-dbname: judge
-port: 5432
-admin_username: admin

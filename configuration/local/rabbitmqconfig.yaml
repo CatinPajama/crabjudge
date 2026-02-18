@@ -1,3 +1,0 @@
-host : rabbitmq
-port : 5672
-vhost : /

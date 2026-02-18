@@ -53,7 +53,7 @@ pub async fn submit_problem(
 ) -> Result<HttpResponse, SubmitError> {
     // sanitize code size
     if let Ok(Some(auth)) = session.get::<SessionAuth>("auth") {
-        if !runtimeconfigs.runtimeconfigs.contains_key(&request.env) {
+        if !runtimeconfigs.0.contains_key(&request.env) {
             return Ok(HttpResponse::BadRequest().body("Invalid environment"));
         }
         let problem_id = path.into_inner().0;

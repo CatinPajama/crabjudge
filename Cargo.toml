@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["api",  "config_loader", "worker", "config_loader_derive", "models"]
+members = ["api", "worker", "models"]
 
 [workspace.dependencies]
 validator = { version = "0.20", features = ["derive"] }
@@ -28,5 +28,3 @@ features = [
 version = "0.12.24"
 default-features = false
 features = ["json", "rustls-tls", "cookies"]
-
-
