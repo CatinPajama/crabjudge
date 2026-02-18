@@ -32,9 +32,7 @@ CrabJudge is an online judge prototype written in Rust. It consists of an HTTP A
    - Records exit codes (137=OOM, 139=SIGSEGV, 124=timeout, etc.)
 
 5. **Configuration Loader**
-   - Loads YAML configs from `configuration/<env>/` (default: `local`)
-   - Override via env vars with prefix `CRABJUDGE_<configname>_<key>`
-   - Config is strongly typed (uses proc macros to derive names)
+   - Loads YAML configs from `configuration/<env>.yaml` (default: `local`)
 
 ### Message Flow
 
@@ -57,20 +55,17 @@ CrabJudge is an online judge prototype written in Rust. It consists of an HTTP A
 
 ## Configuration
 
-All configs are loaded from `configuration/<env>/` (default env is `local`). Files are YAML-based:
+Config is loaded from `configuration/<env>.yaml` (default env is `local`) or via environment variables. Files are YAML-based:
 
-- `apiconfig.yaml` — API host & port
-- `databaseconfig.yaml` — PostgreSQL connection details
-- `redisconfig.yaml` — Redis host & port (for sessions)
-- `rabbitmqconfig.yaml` — RabbitMQ connection details
-- `runtimeconfigs.yaml` — Per-runtime configs (image, compile cmd, run cmd, timeout, memory)
 
-To override, set environment variables with prefix `CRABJUDGE_<lowercase_config_name>_<key>`. Example:
-```bash
-CRABJUDGE_DATABASE_USER=myuser CRABJUDGE_DATABASE_PASSWORD=mypass cargo run -p api
-```
+- appliation — API host & port
+- database — PostgreSQL connection details
+- redis — Redis host & port (for sessions)
+- rabbitmq — RabbitMQ connection details
+- runtimeconfigs — Per-runtime configs (image, compile cmd, run cmd, timeout, memory)
 
-See [configuration/local/](configuration/local/) for examples.
+
+See [configuration/local.yaml](configuration/local.yaml) for examples.
 
 ---
 
@@ -98,19 +93,19 @@ This brings up:
 
 The API container runs migrations automatically at startup.
 
-### Local Dev Run (Without Containers)
+### Development
 
 1. Start services locally or via docker:
    ```bash
-   docker run -d --name postgres -e POSTGRES_PASSWORD=123 -e POSTGRES_DB=judge -p 5432:5432 postgres
-   docker run -d --name redis -p 6379:6379 redis
-   docker run -d --name rabbitmq -e RABBITMQ_DEFAULT_USER=guest -e RABBITMQ_DEFAULT_PASS=guest -p 5672:5672 rabbitmq:4-management
+      docker compose -f docker-compose.dev.yaml up
    ```
 
 2. Set environment variables:
+   Rename .env.sample to .env and set email env variables
    ```bash
-   export DATABASE_URL="postgres://api:123@localhost:5432/judge"
-   export SQLX_OFFLINE=true
+      set -a
+      source .env
+      set +a
    ```
 
 3. Run migrations:
@@ -125,23 +120,13 @@ The API container runs migrations automatically at startup.
    cargo run -p worker
    ```
 
-### Running Tests
-
-```bash
-# API integration tests (spawn ephemeral DBs)
-cargo test -p api
-
-# Worker integration test (uses Docker to create Python container)
-cargo test -p worker
-```
-
 ---
 
 ## API Endpoints
 
 ### POST /signup
-- **Body:** Form fields `username`, `password`
-- **Response:** 200 OK on success, 400 on invalid input, 500 on DB error
+- **Body:** Form fields `username`, `password`, `email`
+- **Response:** 200 OK on success, 400 on invalid input, 500 on DB/email error
 - **Behavior:** Creates a user with Argon2-hashed password, role defaults to "user"
 
 ### POST /login
@@ -214,7 +199,9 @@ runtimeconfigs:
     memory: 67108864
 ```
 
-The key (e.g., "python:3.12") is the exchange name; the image is pulled by the worker on startup.
+The key (e.g., "python:3.12") is the exchange name; the image is pulled by the worker on startup
+Ensure the Docker image is pullable (public or in your registry).
+The API will auto-publish to exchange "ruby:3.2"; worker will spawn a listener and process tasks.
 
 ---
 
@@ -241,19 +228,3 @@ The key (e.g., "python:3.12") is the exchange name; the image is pulled by the w
 
 ---
 
-## Extending
-
-### Adding a New Runtime
-
-1. Add entry to [configuration/local/runtimeconfigs.yaml](configuration/local/runtimeconfigs.yaml):
-   ```yaml
-   "ruby:3.2":
-     image: ruby:3.2-slim
-     run: ruby /tmp/file
-     timeout: 2
-     memory: 67108864
-   ```
-
-2. Ensure the Docker image is pullable (public or in your registry).
-
-3. The API will auto-publish to exchange "ruby:3.2"; worker will spawn a listener and process tasks.
