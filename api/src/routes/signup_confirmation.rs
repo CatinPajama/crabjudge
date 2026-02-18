@@ -1,6 +1,9 @@
 use actix_session::Session;
 use anyhow::Context;
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
+use argon2::{
+    Argon2, PasswordHasher, PasswordVerifier,
+    password_hash::{SaltString, rand_core::OsRng},
+};
 use base64::{Engine as _, engine::general_purpose};
 use std::future::{Ready, ready};
 
@@ -62,21 +65,47 @@ impl ResponseError for ConfirmationError {
 pub struct ConfirmationQueryParams {
     verification_token: String,
 }
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    username: String,
+    password: String,
+}
 
 pub async fn signup_confirmation(
+    form: web::Form<FormData>,
     query_params: web::Query<ConfirmationQueryParams>,
     pgpool: Data<PgPool>,
 ) -> Result<HttpResponse, ConfirmationError> {
+
+    let mut tx = pgpool.begin().await?;
+
     let row = sqlx::query!(
-        r#"UPDATE users SET verification_token=NULL WHERE verification_token= $1"#,
+        r#"DELETE FROM verification WHERE token= $1 AND created_at > NOW() - INTERVAL '7 days' RETURNING email "#,
         query_params.verification_token
     )
-    .execute(pgpool.as_ref())
+    .fetch_optional(&mut *tx)
     .await?;
 
-    if row.rows_affected() == 0 {
+    if row.is_none() {
         return Ok(HttpResponse::BadRequest().body("Invalid confirmation"));
     }
+    let argon2 = Argon2::default();
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = argon2
+        .hash_password(form.password.as_bytes(), &salt)
+        .map_err(|_| ConfirmationError::Invalid(anyhow::anyhow!("Unabled to argon2 hash")))?
+        .to_string();
+
+    let role : &str = Role::User.into();
+    sqlx::query!(
+        r#"INSERT INTO users (username, password, role, email) VALUES ($1,$2,$3,$4);"#,
+        form.username,
+        password_hash,
+        role,
+        row.unwrap().email
+    ).execute(&mut *tx).await?;
+
+    tx.commit().await?;
 
     Ok(HttpResponse::Ok().finish())
 }

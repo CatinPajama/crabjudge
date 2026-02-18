@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO verification (email, token_type, token) VALUES ($1,'signup',$2) ON CONFLICT(email,token_type) DO UPDATE SET token = EXCLUDED.token, created_at = NOW();",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f0921e4017d8b859ce90377d28398114f384fb8d375aea955accf5b874786552"
+}

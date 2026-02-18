@@ -118,7 +118,7 @@ pub async fn run(
             .app_data(application_base_url.clone())
             .route("/login", web::post().to(login))
             .route("/signup", web::post().to(signup))
-            .route("/signup/confirmation", web::get().to(signup_confirmation))
+            .route("/signup/confirmation", web::post().to(signup_confirmation))
             .route("/{problemID}/submit", web::post().to(submit_problem))
             .route("/{submissionID}/status", web::get().to(status))
             .route("/problem/{problemID}", web::get().to(problem))

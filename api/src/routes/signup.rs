@@ -52,7 +52,7 @@ impl std::fmt::Debug for SignupError {
 impl ResponseError for SignupError {
     fn error_response(&self) -> HttpResponse<actix_web::body::BoxBody> {
         match self {
-            Self::DatabaseError(_) => HttpResponse::InternalServerError().finish(),
+            Self::DatabaseError(e) => HttpResponse::InternalServerError().body(e.to_string()),
             Self::Invalid(e) => {
                 let cookie = Cookie::build("signup_error", e.to_string())
                     .max_age(Duration::seconds(0))
@@ -66,8 +66,6 @@ impl ResponseError for SignupError {
 
 #[derive(Deserialize)]
 pub struct SignupForm {
-    username: String,
-    password: String,
     email: String,
 }
 
@@ -85,29 +83,17 @@ pub async fn signup(
     email_client: Data<EmailClient>,
     application_base_url: Data<ApplicationBaseUrl>,
 ) -> Result<HttpResponse, SignupError> {
-    let argon2 = Argon2::default();
-    let salt = SaltString::generate(&mut OsRng);
-    let password_hash = argon2
-        .hash_password(form.password.as_bytes(), &salt)
-        .map_err(|_| SignupError::Invalid(anyhow::anyhow!("Unabled to argon2 hash")))?
-        .to_string();
-
-    let role: &str = Role::User.into();
-
+    let receiver_email = SubscriberEmail::parse(form.email.to_owned())
+        .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
     let verification_token = generate_verification_token();
     sqlx::query!(
-        r#"INSERT INTO users (username, password, role, email, verification_token) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(email) DO UPDATE SET username = EXCLUDED.username, verification_token = EXCLUDED.verification_token;"#,
-        form.username,
-        password_hash,
-        role,
+        r#"INSERT INTO verification (email, token_type, token) VALUES ($1,'signup',$2) ON CONFLICT(email,token_type) DO UPDATE SET token = EXCLUDED.token, created_at = NOW();"#,
         form.email,
         verification_token,
     )
     .execute(pg_pool.as_ref())
     .await?;
 
-    let receiver_email = SubscriberEmail::parse(form.email.to_owned())
-        .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
     let text = format!(
         r#"Click the link to confirm your signup <a href="{}/signup/confirmation?verification_token={}">Click me</a>"#,
         application_base_url.0, verification_token
@@ -117,5 +103,5 @@ pub async fn signup(
         .await
         .map_err(|e| SignupError::EmailError(e))?;
 
-    Ok(HttpResponse::Ok().body("Verified"))
+    Ok(HttpResponse::Ok().body("Verification link sent"))
 }

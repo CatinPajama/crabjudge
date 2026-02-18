@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM verification WHERE token= $1 AND created_at > NOW() - INTERVAL '7 days' RETURNING email ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "email",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "448ef15313d2853d9ea67210135c47cbbfef12a950ad493e1b9fafc741ab9ae9"
+}
