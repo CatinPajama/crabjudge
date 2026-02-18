@@ -21,6 +21,7 @@ pub async fn create_container(
     let cfg = ContainerCreateBody {
         image: Some(env.to_string()),
         tty: Some(true),
+        open_stdin: Some(true),
         host_config: Some(host_config),
         ..Default::default()
     };

@@ -18,3 +18,22 @@ runtimeconfigs:
     timeout : 2
     memory : 67108864
 
+  # "cpp17":
+  #   # image : frolvlad/alpine-gxx
+  #   # compile : g++ --static -std=c++17 -x c++ /tmp/file -o /tmp/a.out
+  #   # run :  /tmp/a.out
+  #   # timeout : 2
+  #   # memory : 67108864
+  #   image: gcc:12
+  #   compile: g++ -std=c++17 -x c++ /tmp/file -o /tmp/a.out
+  #   run: /tmp/a.out
+  #   timeout: 2
+  #   memory: 67108864
+  #
+
+  "cpp17":
+    image: frolvlad/alpine-gxx
+    compile: g++ -std=c++17 -O2 -pipe -x c++ /tmp/file -o /tmp/a.out
+    run: /tmp/a.out
+    timeout: 2
+    memory: 209715200

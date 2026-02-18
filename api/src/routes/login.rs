@@ -125,11 +125,15 @@ pub async fn login(
     session: Session,
 ) -> Result<HttpResponse, LoginError> {
     let row = sqlx::query!(
-        r#"SELECT user_id,password,role from users  WHERE username=$1 ;"#,
+        r#"SELECT user_id,password,role,verification_token from users  WHERE username=$1"#,
         credentials.username,
     )
     .fetch_one(pgpool.as_ref())
     .await?;
+
+    if !row.verification_token.is_none() {
+        return Ok(HttpResponse::Forbidden().body("Not verified. Check your mail for verfication"));
+    }
 
     let argon2 = Argon2::default();
 

@@ -147,7 +147,20 @@ async fn handle_message<T: TestcaseHandler>(
     .await
     .unwrap();
 
-    if let Ok(exec_output) = exec_testcase(
+    // if let Ok(exec_output) = exec_testcase(
+    //     docker_task,
+    //     &container.id,
+    //     &task.code,
+    //     &row.testcase,
+    //     &compile,
+    //     &run,
+    //     timeout,
+    // )
+    // .await
+    // {
+    //     T::handle_testcase(pgpool, task, row, exec_output).await;
+    // }
+    match exec_testcase(
         docker_task,
         &container.id,
         &task.code,
@@ -158,8 +171,14 @@ async fn handle_message<T: TestcaseHandler>(
     )
     .await
     {
-        T::handle_testcase(pgpool, task, row, exec_output).await;
+        Ok(exec_output) => {
+            T::handle_testcase(pgpool, task, row, exec_output).await;
+        }
+        Err(e) => {
+            println!("ERROROROOR : {}", e);
+        }
     }
+
     let total_dur = total_start.elapsed().as_millis();
     let ts_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)

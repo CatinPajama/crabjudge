@@ -1,7 +1,9 @@
-use std::{collections::HashMap, path::Path};
+pub mod email;
 
 use config_loader::{ConfigType, get_configuration};
 use config_loader_derive::ConfigType;
+use email::*;
+use std::{collections::HashMap, path::Path};
 use urlencoding::encode;
 
 #[derive(serde::Deserialize, PartialEq, Debug, ConfigType)]
@@ -30,6 +32,7 @@ pub struct WorkerTask {
 pub struct ApiConfig {
     pub port: u16,
     pub host: String,
+    pub base_url: String,
 }
 
 #[derive(serde::Deserialize, PartialEq, Debug, ConfigType)]
@@ -76,12 +79,15 @@ impl RabbitMQConfig {
         format!("amqp://{}:{}/{}", self.host, self.port, encoded_vhost)
     }
 }
+
+#[derive(serde::Deserialize)]
 pub struct Settings {
     pub application: ApiConfig,
     pub database: DatabaseConfig,
     pub redis: RedisConfig,
     pub rabbitmq: RabbitMQConfig,
     pub runtimeconfigs: RuntimeConfigs,
+    pub email_client: EmailClientConfig,
 }
 
 impl Settings {
@@ -93,10 +99,22 @@ impl Settings {
             redis: get_configuration::<RedisConfig>(base)?,
             rabbitmq: get_configuration::<RabbitMQConfig>(base)?,
             runtimeconfigs: get_configuration::<RuntimeConfigs>(base)?,
+            email_client: get_configuration::<EmailClientConfig>(base)?,
         })
     }
 }
 
+#[derive(serde::Deserialize, Debug, ConfigType)]
+pub struct EmailClientConfig {
+    pub base_url: String,
+    pub sender_email: String,
+    pub authorization_token: String,
+}
+impl EmailClientConfig {
+    pub fn sender(&self) -> Result<SubscriberEmail, String> {
+        SubscriberEmail::parse(self.sender_email.clone())
+    }
+}
 pub enum ExecStatus {
     Passed,
     WrongAnswer,

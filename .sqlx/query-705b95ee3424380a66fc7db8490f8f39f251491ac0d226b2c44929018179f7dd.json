@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT user_id,password,role from users  WHERE username=$1 ;",
+  "query": "SELECT user_id,password,role,verification_token from users  WHERE username=$1",
   "describe": {
     "columns": [
       {
@@ -17,6 +17,11 @@
         "ordinal": 2,
         "name": "role",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "verification_token",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -27,8 +32,9 @@
     "nullable": [
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "2f9dbec0f6b60101001ed51f03afbce19e16eb82847f09a699a911125cf535be"
+  "hash": "705b95ee3424380a66fc7db8490f8f39f251491ac0d226b2c44929018179f7dd"
 }

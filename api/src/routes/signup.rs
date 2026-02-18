@@ -5,9 +5,13 @@ use argon2::Argon2;
 use argon2::PasswordHasher;
 use argon2::password_hash::SaltString;
 use argon2::password_hash::rand_core::OsRng;
+use models::email::{EmailClient, SubscriberEmail};
+use rand::RngExt;
+use rand::distr::Alphanumeric;
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use crate::ApplicationBaseUrl;
 use crate::routes::role::Role;
 
 #[derive(thiserror::Error)]
@@ -21,6 +25,9 @@ pub enum SignupError {
 
     #[error("{0}")]
     Invalid(#[from] anyhow::Error),
+
+    #[error("0")]
+    EmailError(#[from] reqwest::Error),
 }
 
 fn error_chain_fmt(
@@ -47,11 +54,12 @@ impl ResponseError for SignupError {
         match self {
             Self::DatabaseError(_) => HttpResponse::InternalServerError().finish(),
             Self::Invalid(e) => {
-                let cookie = Cookie::build("login_error", e.to_string())
+                let cookie = Cookie::build("signup_error", e.to_string())
                     .max_age(Duration::seconds(0))
                     .finish();
                 HttpResponse::BadRequest().cookie(cookie).finish()
             }
+            Self::EmailError(e) => HttpResponse::InternalServerError().body(e.to_string()),
         }
     }
 }
@@ -60,10 +68,22 @@ impl ResponseError for SignupError {
 pub struct SignupForm {
     username: String,
     password: String,
+    email: String,
 }
+
+fn generate_verification_token() -> String {
+    let mut rng = rand::rng();
+    std::iter::repeat_with(|| rng.sample(Alphanumeric))
+        .map(char::from)
+        .take(25)
+        .collect()
+}
+
 pub async fn signup(
     form: Form<SignupForm>,
     pg_pool: Data<PgPool>,
+    email_client: Data<EmailClient>,
+    application_base_url: Data<ApplicationBaseUrl>,
 ) -> Result<HttpResponse, SignupError> {
     let argon2 = Argon2::default();
     let salt = SaltString::generate(&mut OsRng);
@@ -73,14 +93,29 @@ pub async fn signup(
         .to_string();
 
     let role: &str = Role::User.into();
+
+    let verification_token = generate_verification_token();
     sqlx::query!(
-        r#"INSERT INTO users (username, password, role) VALUES ($1,$2,$3)"#,
+        r#"INSERT INTO users (username, password, role, email, verification_token) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(email) DO UPDATE SET username = EXCLUDED.username, verification_token = EXCLUDED.verification_token;"#,
         form.username,
         password_hash,
-        role
+        role,
+        form.email,
+        verification_token,
     )
     .execute(pg_pool.as_ref())
     .await?;
 
-    Ok(HttpResponse::Ok().finish())
+    let receiver_email = SubscriberEmail::parse(form.email.to_owned())
+        .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
+    let text = format!(
+        r#"Click the link to confirm your signup <a href="{}/signup/confirmation?verification_token={}">Click me</a>"#,
+        application_base_url.0, verification_token
+    );
+    email_client
+        .send_email(receiver_email, "Email Signup Confirmation", &text, &text)
+        .await
+        .map_err(|e| SignupError::EmailError(e))?;
+
+    Ok(HttpResponse::Ok().body("Verified"))
 }

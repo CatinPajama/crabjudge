@@ -1,7 +1,9 @@
 use std::net::TcpListener;
 
 use crate::routes::create_problem::post::create_problem;
-use crate::routes::{list_problems, login, stats, status, submissions, submit_problem};
+use crate::routes::{
+    list_problems, login, signup_confirmation, stats, status, submissions, submit_problem,
+};
 use crate::routes::{problem, signup};
 use actix_cors::Cors;
 use actix_session::SessionMiddleware;
@@ -12,6 +14,7 @@ use actix_web::{
     dev::Server,
     web::{self, Data},
 };
+use models::email::EmailClient;
 use models::{RuntimeConfigs, Settings};
 use sqlx::PgPool;
 
@@ -33,6 +36,16 @@ impl Application {
 
         let listener = TcpListener::bind(address)?;
         let redis_store = RedisSessionStore::new(settings.redis.url()).await.unwrap();
+
+        let sender_email = settings
+            .email_client
+            .sender()
+            .expect("Invalid sender email address");
+        let email_client = EmailClient::new(
+            settings.email_client.base_url,
+            sender_email,
+            settings.email_client.authorization_token,
+        );
         let rabbitmq_conn = lapin::Connection::connect(
             &settings.rabbitmq.url(),
             lapin::ConnectionProperties::default(),
@@ -43,7 +56,9 @@ impl Application {
             listener,
             redis_store,
             rabbitmq_conn,
+            email_client,
             settings.runtimeconfigs,
+            settings.application.base_url,
         )
         .await?;
         Ok(Application {
@@ -57,16 +72,22 @@ impl Application {
     }
 }
 
+pub struct ApplicationBaseUrl(pub String);
+
 pub async fn run(
     pgpool: PgPool,
     listener: TcpListener,
     redis_store: RedisSessionStore,
     rabbitmq_conn: lapin::Connection,
+    email_client: EmailClient,
     runtimeconfigs: RuntimeConfigs,
+    base_url: String,
 ) -> Result<Server, anyhow::Error> {
     let data_pgpool = Data::new(pgpool);
     let data_rabbitmq = Data::new(rabbitmq_conn);
     let data_runtimeconfigs = Data::new(runtimeconfigs);
+    let email_client = Data::new(email_client);
+    let application_base_url = Data::new(ApplicationBaseUrl(base_url));
     let secret_key = Key::generate();
 
     let server = actix_web::HttpServer::new(move || {
@@ -93,8 +114,11 @@ pub async fn run(
             .app_data(data_pgpool.clone())
             .app_data(data_rabbitmq.clone())
             .app_data(data_runtimeconfigs.clone())
+            .app_data(email_client.clone())
+            .app_data(application_base_url.clone())
             .route("/login", web::post().to(login))
             .route("/signup", web::post().to(signup))
+            .route("/signup/confirmation", web::get().to(signup_confirmation))
             .route("/{problemID}/submit", web::post().to(submit_problem))
             .route("/{submissionID}/status", web::get().to(status))
             .route("/problem/{problemID}", web::get().to(problem))

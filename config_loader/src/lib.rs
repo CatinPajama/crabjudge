@@ -6,7 +6,7 @@ pub trait ConfigType {
     fn get_config_name() -> String;
 }
 
-pub fn get_configuration<T: ConfigType + serde::de::DeserializeOwned + PartialEq>(
+pub fn get_configuration<T: ConfigType + serde::de::DeserializeOwned>(
     base_path: &Path,
 ) -> Result<T, ConfigError> {
     let env = env::var("APP_ENV").unwrap_or_else(|_| "local".to_string());

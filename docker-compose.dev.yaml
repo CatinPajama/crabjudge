@@ -55,7 +55,8 @@ services:
       - .:/app
       - cargo-target:/app/target
     environment:
-      DATABASE_URL: postgres://api:123@postgres:5432/judge
+      APP_ENVIRONMENT: "local"
+      DATABASE_URL: "postgres://api:123@postgres:5432/judge"
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,8 +79,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - cargo-target:/app/target
     environment:
+      APP_ENVIRONMENT: "local"
       DATABASE_URL: "postgres://api:123@postgres:5432/judge"
-      SQLX_OFFLINE: "true"
+      # SQLX_OFFLINE: "true"
     depends_on:
       postgres:
         condition: service_healthy
