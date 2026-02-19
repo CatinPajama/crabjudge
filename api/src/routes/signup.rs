@@ -95,7 +95,7 @@ pub async fn signup(
     .await?;
 
     let text = format!(
-        r#"Click the link to confirm your signup <a href="{}/signup/confirmation?verification_token={}">Click me</a>"#,
+        r#"Click the link to confirm your signup <a href="{}/verify?verification_token={}">Click me</a>"#,
         application_base_url.0, verification_token
     );
     email_client

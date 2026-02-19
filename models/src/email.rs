@@ -64,7 +64,7 @@ impl EmailClient {
         html_content: &str,
         text_content: &str,
     ) -> Result<(), reqwest::Error> {
-        let url = format!("{}/api/send", self.base_url);
+        // let url = format!("{}/api/send", self.base_url);
         let request_body = SendEmailRequest {
             from: SendEmailSender {
                 email: self.sender.as_ref(),
@@ -79,7 +79,7 @@ impl EmailClient {
         };
         let res = self
             .http_client
-            .post(&url)
+            .post(&self.base_url)
             .bearer_auth(&self.authorization_token)
             .json(&request_body)
             .send()

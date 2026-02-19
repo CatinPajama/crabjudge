@@ -74,7 +74,6 @@ pub async fn exec_testcase(
 
     Ok(crate::docker::run_exec(&docker_task, container_id, cmd, testcase).await?)
 }
-
 async fn get_consumer(
     queue: &str,
     exchange: &str,
