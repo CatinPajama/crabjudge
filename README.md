@@ -2,10 +2,12 @@
 
 CrabJudge is an online judge prototype written in Rust. It consists of an HTTP API that handles user authentication and code submissions, a worker that executes submitted code inside Docker containers with resource limits, and shared models + configuration utilities.
 
-<p align="center" width="100%">
-<video src="assets/recording.mp4" controls></video>
-</p>
----
+
+
+https://github.com/user-attachments/assets/fe6030fd-2e6c-4136-9210-42d7ea2e1a21
+
+
+
 ## Overview / System Design
 
 ### Components
