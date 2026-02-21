@@ -1,15 +1,58 @@
+runtimeconfig:
+  image : python:3.12-slim
+  run : python /tmp/file
+  timeout : 2
+  memory : 67108864
+  env: python:3.12
+
+  # "node:20":
+  #   image : node:20-alpine
+  #   run : node /tmp/file
+  #   timeout : 2
+  #   memory : 67108864
+  #
+  # "gcc":
+  #   image : frolvlad/alpine-gcc
+  #   compile : gcc -x c /tmp/file -o /tmp/a.out
+  #   run :  /tmp/a.out
+  #   timeout : 2
+  #   memory : 67108864
+  #
+  # # "cpp17":
+  # #   # image : frolvlad/alpine-gxx
+  # #   # compile : g++ --static -std=c++17 -x c++ /tmp/file -o /tmp/a.out
+  # #   # run :  /tmp/a.out
+  # #   # timeout : 2
+  # #   # memory : 67108864
+  # #   image: gcc:12
+  # #   compile: g++ -std=c++17 -x c++ /tmp/file -o /tmp/a.out
+  # #   run: /tmp/a.out
+  # #   timeout: 2
+  # #   memory: 67108864
+  # #
+  #
+  # "cpp17":
+  #   image: frolvlad/alpine-gxx
+  #   compile: g++ -std=c++17 -O2 -pipe -x c++ /tmp/file -o /tmp/a.out
+  #   run: /tmp/a.out
+  #   timeout: 2
+  #   memory: 209715200
+  #
+  #
 runtimeconfigs:
   "python:3.12":
     image : python:3.12-slim
     run : python /tmp/file
     timeout : 2
     memory : 67108864
-  
+    env: python:3.12
+
   "node:20":
     image : node:20-alpine
     run : node /tmp/file
     timeout : 2
     memory : 67108864
+    env: node:20
 
   "gcc":
     image : frolvlad/alpine-gcc
@@ -17,6 +60,7 @@ runtimeconfigs:
     run :  /tmp/a.out
     timeout : 2
     memory : 67108864
+    env : gcc
 
   # "cpp17":
   #   # image : frolvlad/alpine-gxx
@@ -37,3 +81,4 @@ runtimeconfigs:
     run: /tmp/a.out
     timeout: 2
     memory: 209715200
+    env : cpp17

@@ -20,6 +20,7 @@ pub struct RuntimeConfig {
     pub image: String,
     pub timeout: u8,
     pub memory: i64,
+    pub env: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]

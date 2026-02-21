@@ -75,7 +75,8 @@ pub async fn submit_problem(
         };
         channel
             .exchange_declare(
-                &request.env,
+                "code",
+                // &request.env,
                 lapin::ExchangeKind::Direct,
                 ExchangeDeclareOptions::default(),
                 FieldTable::default(),
@@ -83,8 +84,9 @@ pub async fn submit_problem(
             .await?;
         channel
             .basic_publish(
+                "code",
                 &request.env,
-                "",
+                // "",
                 BasicPublishOptions::default(),
                 serde_json::to_vec(&worker_task).unwrap().as_ref(),
                 BasicProperties::default(),

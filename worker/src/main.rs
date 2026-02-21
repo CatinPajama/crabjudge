@@ -19,6 +19,6 @@ async fn main() -> anyhow::Result<()> {
 
     let docker = Docker::connect_with_local_defaults()?;
 
-    execute::<DefaultTestcaseHandler>(settings.runtimeconfigs, conn, pgpool, docker).await;
+    execute::<DefaultTestcaseHandler>(settings.runtimeconfig, conn, pgpool, docker).await;
     Ok(())
 }

@@ -1,16 +1,17 @@
 use crate::docker::ExecOutput;
 use crate::error::ExecError;
-use crate::pool::{ContainerGroup, Pool};
+use crate::pool::ContainerGroup;
 use bollard::Docker;
-use deadpool::managed::Object;
+use deadpool::managed::{self, Object, Pool};
 use futures::future::join_all;
 use futures_util::StreamExt;
 use lapin::{Channel, Consumer, options::*, types::FieldTable};
-use models::{ExecStatus, RuntimeConfigs, WorkerTask};
+use models::{ExecStatus, RuntimeConfig, RuntimeConfigs, WorkerTask};
 use sqlx::PgPool;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::sync::CancellationToken;
 
 fn are_equal_ignore_whitespace(s1: &str, s2: &str) -> bool {
     let s1_filtered: String = s1.chars().filter(|c| !c.is_whitespace()).collect();
@@ -40,7 +41,7 @@ async fn declare_queue_exchange(
         .queue_bind(
             queue,
             exchange,
-            "",
+            queue,
             QueueBindOptions::default(),
             FieldTable::default(),
         )
@@ -84,7 +85,7 @@ async fn get_consumer(
     channel
         .basic_consume(
             queue,
-            exchange,
+            "",
             BasicConsumeOptions::default(),
             FieldTable::default(),
         )
@@ -92,33 +93,57 @@ async fn get_consumer(
 }
 
 async fn listen<T: TestcaseHandler>(
-    docker: Docker,
-    pool: Pool,
+    docker: &Docker,
+    pool: &managed::Pool<ContainerGroup>,
     pgpool: PgPool,
     mut consumer: Consumer,
     compile: Option<String>,
     run: String,
     timeout: u8,
-) {
+    token: CancellationToken,
+) -> Result<(), ExecError> {
     let mut handles = vec![];
     while let Some(delivery) = consumer.next().await {
-        let delivery = delivery.unwrap();
+        let delivery = delivery?;
         let docker_task = docker.clone();
         let run = run.clone();
         let compile = compile.clone();
         let pgpool = pgpool.clone();
 
-        let conn = pool.get().await.unwrap();
-        let task: WorkerTask = serde_json::from_slice(&delivery.data)
-            .map_err(|_| ExecError::ParseError)
-            .unwrap();
-
+        let conn: Object<ContainerGroup> = pool.get().await?;
+        let task: WorkerTask =
+            serde_json::from_slice(&delivery.data).map_err(|_| ExecError::ParseError)?;
+        let token = token.clone();
         handles.push(tokio::spawn(async move {
-            handle_message::<T>(docker_task, compile, run, timeout, pgpool, conn, task).await;
-            let _ = delivery.ack(BasicAckOptions::default()).await;
-        }));
+            tokio::select! {
+                _ = token.cancelled() => {
+                    println!("closing");
+                    delivery
+                            .nack(BasicNackOptions {
+                                multiple: true,
+                                requeue: true,
+                            })
+                        .await
+
+                }
+                output = handle_message::<T>(docker_task, compile, run, timeout, pgpool, conn, task)=> {
+                match output {
+                    Ok(()) => delivery.ack(BasicAckOptions::default()).await,
+                    Err(e) => {
+                        delivery
+                            .nack(BasicNackOptions {
+                                multiple: true,
+                                requeue: true,
+                            })
+                        .await
+                    }
+                }
+            }
+            }
+       }));
     }
     join_all(handles).await;
+    Ok(())
 }
 
 pub struct Testcase {
@@ -134,7 +159,7 @@ async fn handle_message<T: TestcaseHandler>(
     pgpool: sqlx::Pool<sqlx::Postgres>,
     container: Object<ContainerGroup>,
     task: WorkerTask,
-) {
+) -> Result<(), ExecError> {
     let total_start = Instant::now();
 
     let row = sqlx::query_as!(
@@ -143,23 +168,9 @@ async fn handle_message<T: TestcaseHandler>(
         task.problem_id as i64
     )
     .fetch_one(&pgpool)
-    .await
-    .unwrap();
+    .await?;
 
-    // if let Ok(exec_output) = exec_testcase(
-    //     docker_task,
-    //     &container.id,
-    //     &task.code,
-    //     &row.testcase,
-    //     &compile,
-    //     &run,
-    //     timeout,
-    // )
-    // .await
-    // {
-    //     T::handle_testcase(pgpool, task, row, exec_output).await;
-    // }
-    match exec_testcase(
+    let exec_output = exec_testcase(
         docker_task,
         &container.id,
         &task.code,
@@ -168,15 +179,8 @@ async fn handle_message<T: TestcaseHandler>(
         &run,
         timeout,
     )
-    .await
-    {
-        Ok(exec_output) => {
-            T::handle_testcase(pgpool, task, row, exec_output).await;
-        }
-        Err(e) => {
-            println!("Error executing : {}", e);
-        }
-    }
+    .await?;
+    T::handle_testcase(pgpool, task, row, exec_output).await?;
 
     let total_dur = total_start.elapsed().as_millis();
     let ts_ms = SystemTime::now()
@@ -184,6 +188,7 @@ async fn handle_message<T: TestcaseHandler>(
         .unwrap()
         .as_millis();
     println!("Total duration: {} ms and {}", total_dur, ts_ms);
+    Ok(())
 }
 
 pub trait TestcaseHandler {
@@ -192,7 +197,7 @@ pub trait TestcaseHandler {
         task: WorkerTask,
         row: Testcase,
         exec_output: ExecOutput,
-    ) -> impl std::future::Future<Output = ()> + std::marker::Send {
+    ) -> impl std::future::Future<Output = Result<(), ExecError>> + std::marker::Send {
         async move {
             let status: &str = match exec_output.exit_code {
                 137 => ExecStatus::MemoryLimitExceeded,
@@ -206,13 +211,6 @@ pub trait TestcaseHandler {
                     }
                 }
             }
-            /*
-            let status: &str = if are_equal_ignore_whitespace(&exec_output, &row.output) {
-                ExecStatus::Passed
-            } else {
-                ExecStatus::Failed
-            }
-            */
             .into();
             println!("task submission id is {}", task.submission_id);
             sqlx::query!(
@@ -222,50 +220,48 @@ pub trait TestcaseHandler {
                 task.submission_id,
             )
             .execute(&pgpool)
-            .await
-            .unwrap();
+            .await?;
+            Ok(())
         }
     }
 }
 
 pub async fn execute<T: TestcaseHandler>(
-    runtimeconfigs: RuntimeConfigs,
+    runtime: RuntimeConfig,
     conn: lapin::Connection,
     pgpool: PgPool,
     docker: Docker,
 ) {
-    let mut handles = vec![];
-    for runtime in runtimeconfigs.0 {
-        let docker_clone = docker.clone();
-        let channel = conn.create_channel().await.unwrap();
-        let pgpool_clone = pgpool.clone();
-        let handle = tokio::spawn(async move {
-            let manager = ContainerGroup::new(
-                docker_clone.clone(),
-                &runtime.1.image,
-                runtime.1.memory,
-                runtime.1.timeout,
-            )
-            .await
-            .unwrap();
-            let docker_pool = Pool::builder(manager).max_size(6).build().unwrap();
-            let consumer = get_consumer(&runtime.0, &runtime.0, channel)
-                .await
-                .expect("Unable to get consumer");
+    let channel = conn.create_channel().await.expect("Error creating channel");
+    let manager = ContainerGroup::new(
+        docker.clone(),
+        &runtime.image,
+        runtime.memory,
+        runtime.timeout,
+    )
+    .await
+    .expect("Error creating Pool Manager");
+    let docker_pool = Pool::builder(manager)
+        .max_size(6)
+        .build()
+        .expect("Error creating docker pool");
+    let consumer = get_consumer(&runtime.env, "code", channel)
+        .await
+        .expect("Unable to get consumer");
 
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-            tokio::select! {
-                _ = listen::<T>(docker_clone, docker_pool.clone(), pgpool_clone.clone(), consumer, runtime.1.compile, runtime.1.run , runtime.1.timeout) => {},
-                _ = tokio::signal::ctrl_c()  => {
-                    docker_pool.manager().close().await;
-                },
-                _ = sigterm.recv() => {
-                    docker_pool.manager().close().await;
-                }
-            }
-        });
-        handles.push(handle);
+    let token = CancellationToken::new();
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    tokio::select! {
+        _ = listen::<T>(&docker, &docker_pool, pgpool, consumer, runtime.compile, runtime.run , runtime.timeout, token.clone()) => {
+            docker_pool.manager().close().await;
+        },
+        _ = tokio::signal::ctrl_c()  => {
+            token.cancel();
+            docker_pool.manager().close().await;
+        },
+        _ = sigterm.recv() => {
+            token.cancel();
+            docker_pool.manager().close().await;
+        }
     }
-    join_all(handles).await;
 }

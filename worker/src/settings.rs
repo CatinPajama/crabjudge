@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use models::{DatabaseConfig, RabbitMQConfig, RuntimeConfigs, utils::get_configuration};
+use models::{DatabaseConfig, RabbitMQConfig, RuntimeConfig, utils::get_configuration};
 
 #[derive(serde::Deserialize)]
 pub struct WorkerSettings {
     pub database: DatabaseConfig,
     pub rabbitmq: RabbitMQConfig,
-    pub runtimeconfigs: RuntimeConfigs,
+    pub runtimeconfig: RuntimeConfig,
 }
 
 impl WorkerSettings {

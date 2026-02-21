@@ -92,4 +92,4 @@ impl Manager for ContainerGroup {
     }
 }
 
-pub type Pool = managed::Pool<ContainerGroup>;
+// pub type Pool<'a> = &'a managed::Pool<ContainerGroup<'a>>;

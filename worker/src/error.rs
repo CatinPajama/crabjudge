@@ -2,6 +2,13 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ExecError {
+    #[error("Datbase error :{0}")]
+    DatabaseError(
+        #[from]
+        #[source]
+        sqlx::Error,
+    ),
+
     #[error("Docker error :{0}")]
     DockerError(
         #[from]
