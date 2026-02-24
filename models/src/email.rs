@@ -73,7 +73,7 @@ impl EmailClient {
             to: [SendEmailReceiver {
                 email: recipient.as_ref(),
             }],
-            subject: subject,
+            subject,
             html: html_content,
             text: text_content,
         };

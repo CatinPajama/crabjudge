@@ -1,12 +1,13 @@
 use crate::docker::ExecOutput;
 use crate::error::ExecError;
 use crate::pool::ContainerGroup;
+use backoff::ExponentialBackoff;
 use bollard::Docker;
 use deadpool::managed::{self, Object, Pool};
 use futures::future::join_all;
 use futures_util::StreamExt;
 use lapin::{Channel, Consumer, options::*, types::FieldTable};
-use models::{ExecStatus, RuntimeConfig, RuntimeConfigs, WorkerTask};
+use models::{ExecStatus, RuntimeConfig, WorkerTask};
 use sqlx::PgPool;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -92,22 +93,27 @@ async fn get_consumer(
         .await
 }
 
+pub struct CompileConfig {
+    compile: Option<String>,
+    run: String,
+    timeout: u8,
+}
+
 async fn listen<T: TestcaseHandler>(
     docker: &Docker,
     pool: &managed::Pool<ContainerGroup>,
     pgpool: PgPool,
+    compile_config: CompileConfig,
     mut consumer: Consumer,
-    compile: Option<String>,
-    run: String,
-    timeout: u8,
+
     token: CancellationToken,
 ) -> Result<(), ExecError> {
     let mut handles = vec![];
     while let Some(delivery) = consumer.next().await {
         let delivery = delivery?;
         let docker_task = docker.clone();
-        let run = run.clone();
-        let compile = compile.clone();
+        let run = compile_config.run.clone();
+        let compile = compile_config.compile.clone();
         let pgpool = pgpool.clone();
 
         let conn: Object<ContainerGroup> = pool.get().await?;
@@ -126,10 +132,10 @@ async fn listen<T: TestcaseHandler>(
                         .await
 
                 }
-                output = handle_message::<T>(docker_task, compile, run, timeout, pgpool, conn, task)=> {
+                output = handle_message::<T>(docker_task, compile, run, compile_config.timeout, pgpool, conn, task)=> {
                 match output {
                     Ok(()) => delivery.ack(BasicAckOptions::default()).await,
-                    Err(e) => {
+                    Err(_) => {
                         delivery
                             .nack(BasicNackOptions {
                                 multiple: true,
@@ -151,6 +157,19 @@ pub struct Testcase {
     output: String,
 }
 
+async fn fetch_testcase(pgpool: &PgPool, problem_id: i64) -> Result<Testcase, sqlx::Error> {
+    backoff::future::retry(ExponentialBackoff::default(), || async {
+        Ok(sqlx::query_as!(
+            Testcase,
+            "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
+            problem_id
+        )
+        .fetch_one(pgpool)
+        .await?)
+    })
+    .await
+}
+
 async fn handle_message<T: TestcaseHandler>(
     docker_task: Docker,
     compile: Option<String>,
@@ -162,25 +181,19 @@ async fn handle_message<T: TestcaseHandler>(
 ) -> Result<(), ExecError> {
     let total_start = Instant::now();
 
-    let row = sqlx::query_as!(
-        Testcase,
-        "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
-        task.problem_id as i64
-    )
-    .fetch_one(&pgpool)
-    .await?;
+    let testcase = fetch_testcase(&pgpool, task.problem_id).await?;
 
     let exec_output = exec_testcase(
         docker_task,
         &container.id,
         &task.code,
-        &row.testcase,
+        &testcase.testcase,
         &compile,
         &run,
         timeout,
     )
     .await?;
-    T::handle_testcase(pgpool, task, row, exec_output).await?;
+    T::handle_testcase(pgpool, task, testcase.output, exec_output).await?;
 
     let total_dur = total_start.elapsed().as_millis();
     let ts_ms = SystemTime::now()
@@ -191,11 +204,25 @@ async fn handle_message<T: TestcaseHandler>(
     Ok(())
 }
 
+
+async fn update_submit_status(pgpool: &PgPool, submission_id: i64, output: String, status: &str) -> Result<(), sqlx::Error> {
+    backoff::future::retry(ExponentialBackoff::default(), || async {
+        sqlx::query!(
+            "UPDATE submit_status SET output=$1, status=$2 WHERE submission_id=$3",
+            output,
+            status,
+            submission_id,
+        )
+        .execute(pgpool)
+        .await?;
+        Ok(())
+    }).await
+}
 pub trait TestcaseHandler {
     fn handle_testcase(
         pgpool: sqlx::Pool<sqlx::Postgres>,
         task: WorkerTask,
-        row: Testcase,
+        output: String,
         exec_output: ExecOutput,
     ) -> impl std::future::Future<Output = Result<(), ExecError>> + std::marker::Send {
         async move {
@@ -204,7 +231,7 @@ pub trait TestcaseHandler {
                 139 => ExecStatus::SegmentationFault,
                 124 => ExecStatus::TimeLimitExceeded,
                 _ => {
-                    if are_equal_ignore_whitespace(&exec_output.output, &row.output) {
+                    if are_equal_ignore_whitespace(&exec_output.output, &output) {
                         ExecStatus::Passed
                     } else {
                         ExecStatus::WrongAnswer
@@ -213,14 +240,7 @@ pub trait TestcaseHandler {
             }
             .into();
             println!("task submission id is {}", task.submission_id);
-            sqlx::query!(
-                "UPDATE submit_status SET output=$1, status=$2 WHERE submission_id=$3",
-                exec_output.output,
-                status,
-                task.submission_id,
-            )
-            .execute(&pgpool)
-            .await?;
+            update_submit_status(&pgpool, task.submission_id, exec_output.output, status).await?;
             Ok(())
         }
     }
@@ -251,8 +271,14 @@ pub async fn execute<T: TestcaseHandler>(
 
     let token = CancellationToken::new();
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+
+    let compile_config = CompileConfig {
+        compile: runtime.compile,
+        run: runtime.run,
+        timeout: runtime.timeout,
+    };
     tokio::select! {
-        _ = listen::<T>(&docker, &docker_pool, pgpool, consumer, runtime.compile, runtime.run , runtime.timeout, token.clone()) => {
+        _ = listen::<T>(&docker, &docker_pool, pgpool, compile_config, consumer, token.clone()) => {
             docker_pool.manager().close().await;
         },
         _ = tokio::signal::ctrl_c()  => {

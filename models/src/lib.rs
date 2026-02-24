@@ -4,9 +4,7 @@ pub mod utils;
 
 pub use exec::*;
 
-use crate::utils::get_configuration;
-use email::*;
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap};
 use urlencoding::encode;
 
 #[derive(serde::Deserialize, PartialEq, Debug)]

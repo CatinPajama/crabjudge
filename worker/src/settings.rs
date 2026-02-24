@@ -12,6 +12,6 @@ pub struct WorkerSettings {
 impl WorkerSettings {
     pub fn get_configuration() -> Result<WorkerSettings, config::ConfigError> {
         let base = Path::new("./configuration");
-        return Ok(get_configuration::<WorkerSettings>(base)?);
+        get_configuration::<WorkerSettings>(base)
     }
 }
