@@ -15,6 +15,8 @@ pub async fn create_container(
         memory: Some(memory),
         memory_swap: Some(memory),
         network_mode: Some("none".to_string()),
+        pids_limit: Some(16),
+        security_opt: Some(vec!["no-new-privileges".to_string()]),
         ..Default::default()
     };
     let cfg = ContainerCreateBody {
