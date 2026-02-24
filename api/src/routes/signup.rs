@@ -1,10 +1,6 @@
 use actix_web::cookie::time::Duration;
 use actix_web::web::Data;
 use actix_web::{HttpResponse, ResponseError, cookie::Cookie, web::Form};
-use argon2::Argon2;
-use argon2::PasswordHasher;
-use argon2::password_hash::SaltString;
-use argon2::password_hash::rand_core::OsRng;
 use models::email::{EmailClient, SubscriberEmail};
 use rand::RngExt;
 use rand::distr::Alphanumeric;
@@ -12,7 +8,6 @@ use serde::Deserialize;
 use sqlx::PgPool;
 
 use crate::ApplicationBaseUrl;
-use crate::routes::role::Role;
 
 #[derive(thiserror::Error)]
 pub enum SignupError {
@@ -101,7 +96,7 @@ pub async fn signup(
     email_client
         .send_email(receiver_email, "Email Signup Confirmation", &text, &text)
         .await
-        .map_err(|e| SignupError::EmailError(e))?;
+        .map_err(SignupError::EmailError)?;
 
     Ok(HttpResponse::Ok().body("Verification link sent"))
 }

@@ -131,7 +131,7 @@ pub async fn login(
     .fetch_one(pgpool.as_ref())
     .await?;
 
-    if !row.verification_token.is_none() {
+    if row.verification_token.is_some() {
         return Ok(HttpResponse::Forbidden().body("Not verified. Check your mail for verfication"));
     }
 

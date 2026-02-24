@@ -18,6 +18,6 @@ pub struct ApiSettings {
 impl ApiSettings {
     pub fn get_configuration() -> Result<ApiSettings, config::ConfigError> {
         let base = Path::new("./configuration");
-        return Ok(get_configuration::<ApiSettings>(base)?);
+        get_configuration::<ApiSettings>(base)
     }
 }

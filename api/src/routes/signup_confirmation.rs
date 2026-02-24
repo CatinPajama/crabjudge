@@ -1,21 +1,16 @@
-use actix_session::Session;
-use anyhow::Context;
 use argon2::{
-    Argon2, PasswordHasher, PasswordVerifier,
+    Argon2, PasswordHasher,
     password_hash::{SaltString, rand_core::OsRng},
 };
-use base64::{Engine as _, engine::general_purpose};
-use std::future::{Ready, ready};
 
 use actix_web::{
-    FromRequest, HttpResponse, ResponseError,
+    HttpResponse, ResponseError,
     cookie::{Cookie, time::Duration},
-    http::header::HeaderValue,
     web::{self, Data},
 };
 use sqlx::PgPool;
 
-use crate::routes::{role::Role, session::SessionAuth};
+use crate::routes::role::Role;
 
 #[derive(thiserror::Error)]
 pub enum ConfirmationError {
