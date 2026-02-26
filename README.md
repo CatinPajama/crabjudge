@@ -4,7 +4,10 @@ CrabJudge is an online judge prototype written in Rust. It consists of an HTTP A
 
 
 
-https://github.com/user-attachments/assets/fe6030fd-2e6c-4136-9210-42d7ea2e1a21
+
+
+https://github.com/user-attachments/assets/67a08b55-11da-404b-8241-36216fc86b3e
+
 
 
 
