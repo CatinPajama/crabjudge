@@ -24,7 +24,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
-tokio-util = "0.7.18"
+tokio-util = { version = "0.7.18", features = ["rt"] }
 backoff = {version = "0.4.0", features = ["tokio"]}
 
 

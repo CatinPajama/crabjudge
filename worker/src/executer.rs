@@ -12,7 +12,9 @@ use sqlx::PgPool;
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::future::FutureExt;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 fn are_equal_ignore_whitespace(s1: &str, s2: &str) -> bool {
     let s1_filtered: String = s1.chars().filter(|c| !c.is_whitespace()).collect();
@@ -100,6 +102,7 @@ pub struct CompileConfig {
 }
 
 async fn listen<T: TestcaseHandler>(
+    task_tracker: TaskTracker,
     docker: &Docker,
     pool: &managed::Pool<ContainerGroup>,
     pgpool: PgPool,
@@ -108,7 +111,6 @@ async fn listen<T: TestcaseHandler>(
 
     token: CancellationToken,
 ) -> Result<(), ExecError> {
-    let mut handles = vec![];
     while let Some(delivery) = consumer.next().await {
         let delivery = delivery?;
         let docker_task = docker.clone();
@@ -120,20 +122,20 @@ async fn listen<T: TestcaseHandler>(
         let task: WorkerTask =
             serde_json::from_slice(&delivery.data).map_err(|_| ExecError::ParseError)?;
         let token = token.clone();
-        handles.push(tokio::spawn(async move {
-            tokio::select! {
-                _ = token.cancelled() => {
-                    println!("closing");
-                    delivery
-                            .nack(BasicNackOptions {
-                                multiple: true,
-                                requeue: true,
-                            })
-                        .await
-
-                }
-                output = handle_message::<T>(docker_task, compile, run, compile_config.timeout, pgpool, conn, task)=> {
-                match output {
+        task_tracker.spawn(async move {
+            match handle_message::<T>(
+                docker_task,
+                compile,
+                run,
+                compile_config.timeout,
+                pgpool,
+                conn,
+                task,
+            )
+            .with_cancellation_token_owned(token)
+            .await
+            {
+                Some(output) => match output {
                     Ok(()) => delivery.ack(BasicAckOptions::default()).await,
                     Err(_) => {
                         delivery
@@ -141,16 +143,51 @@ async fn listen<T: TestcaseHandler>(
                                 multiple: true,
                                 requeue: true,
                             })
-                        .await
+                            .await
                     }
+                },
+                None => {
+                    delivery
+                        .nack(BasicNackOptions {
+                            multiple: true,
+                            requeue: true,
+                        })
+                        .await
                 }
             }
-            }
-       }));
+        });
     }
-    join_all(handles).await;
+    task_tracker.wait().await;
+    // join_all(handles).await;
     Ok(())
 }
+/*
+async fn handle_delivery<T: TestcaseHandler>(
+    compile_config: &CompileConfig,
+    delivery: lapin::message::Delivery,
+    docker_task: Docker,
+    run: String,
+    compile: Option<String>,
+    pgpool: sqlx::Pool<sqlx::Postgres>,
+    conn: Object<ContainerGroup>,
+    task: WorkerTask,
+    token: CancellationToken,
+) -> impl Future<Output = Result<bool, lapin::Error>> {
+        match output {
+            Ok(()) => delivery.ack(BasicAckOptions::default()).await,
+            Err(_) => {
+                delivery
+                    .nack(BasicNackOptions {
+                        multiple: true,
+                        requeue: true,
+                    })
+                .await
+            }
+        }
+    }
+    }
+}
+*/
 
 pub struct Testcase {
     testcase: String,
@@ -204,8 +241,12 @@ async fn handle_message<T: TestcaseHandler>(
     Ok(())
 }
 
-
-async fn update_submit_status(pgpool: &PgPool, submission_id: i64, output: String, status: &str) -> Result<(), sqlx::Error> {
+async fn update_submit_status(
+    pgpool: &PgPool,
+    submission_id: i64,
+    output: String,
+    status: &str,
+) -> Result<(), sqlx::Error> {
     backoff::future::retry(ExponentialBackoff::default(), || async {
         sqlx::query!(
             "UPDATE submit_status SET output=$1, status=$2 WHERE submission_id=$3",
@@ -216,7 +257,8 @@ async fn update_submit_status(pgpool: &PgPool, submission_id: i64, output: Strin
         .execute(pgpool)
         .await?;
         Ok(())
-    }).await
+    })
+    .await
 }
 pub trait TestcaseHandler {
     fn handle_testcase(
@@ -277,15 +319,18 @@ pub async fn execute<T: TestcaseHandler>(
         run: runtime.run,
         timeout: runtime.timeout,
     };
+    let task_tracker = TaskTracker::new();
     tokio::select! {
-        _ = listen::<T>(&docker, &docker_pool, pgpool, compile_config, consumer, token.clone()) => {
+        _ = listen::<T>(task_tracker.clone(),&docker, &docker_pool, pgpool, compile_config, consumer, token.clone()) => {
             docker_pool.manager().close().await;
         },
         _ = tokio::signal::ctrl_c()  => {
+            task_tracker.close();
             token.cancel();
             docker_pool.manager().close().await;
         },
         _ = sigterm.recv() => {
+            task_tracker.close();
             token.cancel();
             docker_pool.manager().close().await;
         }
