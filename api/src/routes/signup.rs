@@ -7,6 +7,7 @@ use rand::RngExt;
 use rand::distr::Alphanumeric;
 use serde::Deserialize;
 use sqlx::PgPool;
+use tracing::{error, info, instrument, warn};
 use validator::Validate;
 #[derive(thiserror::Error)]
 pub enum SignupError {
@@ -72,18 +73,28 @@ fn generate_verification_token() -> String {
         .collect()
 }
 
+#[instrument(skip(form, pg_pool, email_client, application_base_url), fields(email = %form.email))]
 pub async fn signup(
     form: Form<SignupForm>,
     pg_pool: Data<PgPool>,
     email_client: Data<EmailClient>,
     application_base_url: Data<ApplicationBaseUrl>,
 ) -> Result<HttpResponse, SignupError> {
-    // perform request validation first
-    form.validate()
-        .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
+    info!("Signup attempt initiated");
 
-    let receiver_email = SubscriberEmail::parse(form.email.to_owned())
-        .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
+    // perform request validation first
+    form.validate().map_err(|e| {
+        warn!("Signup validation failed: {}", e);
+        SignupError::Invalid(anyhow::anyhow!(e))
+    })?;
+
+    let receiver_email = SubscriberEmail::parse(form.email.to_owned()).map_err(|e| {
+        warn!("Invalid email format");
+        SignupError::Invalid(anyhow::anyhow!(e))
+    })?;
+
+    info!("Email validated successfully");
+
     let verification_token = generate_verification_token();
     sqlx::query!(
         r#"INSERT INTO verification (email, token_type, token) VALUES ($1,'signup',$2) ON CONFLICT(email,token_type) DO UPDATE SET token = EXCLUDED.token, created_at = NOW();"#,
@@ -91,7 +102,11 @@ pub async fn signup(
         verification_token,
     )
     .execute(pg_pool.as_ref())
-    .await?;
+    .await
+    .map_err(|e| {
+        error!("Database error during signup: {}", e);
+        SignupError::DatabaseError(e)
+    })?;
 
     let text = format!(
         r#"Click the link to confirm your signup <a href="{}/verify?verification_token={}">Click me</a>"#,
@@ -100,7 +115,11 @@ pub async fn signup(
     email_client
         .send_email(receiver_email, "Email Signup Confirmation", &text, &text)
         .await
-        .map_err(SignupError::EmailError)?;
+        .map_err(|e| {
+            error!("Failed to send confirmation email: {}", e);
+            SignupError::EmailError(e)
+        })?;
 
+    info!("Signup successful, verification email sent");
     Ok(HttpResponse::Ok().body("Verification link sent"))
 }

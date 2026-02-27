@@ -3,6 +3,7 @@ use actix_web::{
     HttpResponse, ResponseError,
     web::{self, Data},
 };
+use tracing::{error, info, instrument, warn};
 use validator::Validate;
 
 use lapin::{
@@ -50,6 +51,7 @@ impl ResponseError for SubmitError {
     }
 }
 
+#[instrument(skip(request, conn, session, runtimeconfigs, pg_pool), fields(user_id = tracing::field::Empty))]
 pub async fn submit_problem(
     request: web::Json<SubmitJson>,
     path: web::Path<(i64,)>,
@@ -58,17 +60,29 @@ pub async fn submit_problem(
     runtimeconfigs: Data<RuntimeConfigs>,
     pg_pool: Data<PgPool>,
 ) -> Result<HttpResponse, SubmitError> {
+    info!("Submission attempt initiated");
+
     // validate payload
-    request
-        .validate()
-        .map_err(|e| SubmitError::Validation(anyhow::anyhow!(e)))?;
+    request.validate().map_err(|e| {
+        warn!("Submission validation failed: {}", e);
+        SubmitError::Validation(anyhow::anyhow!(e))
+    })?;
 
     // sanitize code size
     if let Ok(Some(auth)) = session.get::<SessionAuth>("auth") {
+        // attach user id to the current span for easier tracing/searching
+        tracing::Span::current().record("user_id", &auth.user_id);
         if !runtimeconfigs.0.contains_key(&request.env) {
+            warn!("Invalid environment: {}", request.env);
             return Ok(HttpResponse::BadRequest().body("Invalid environment"));
         }
+
         let problem_id = path.into_inner().0;
+        info!(
+            "Submission for problem_id: {}, user_id: {}, env: {}",
+            problem_id, auth.user_id, request.env
+        );
+
         let channel = conn.create_channel().await?;
 
         let submission_id = sqlx::query!(
@@ -77,7 +91,13 @@ pub async fn submit_problem(
             problem_id,
         )
         .fetch_one(pg_pool.as_ref())
-        .await?.submission_id;
+        .await
+        .map_err(|e| {
+            error!("Failed to create submission record: {}", e);
+            SubmitError::DatabaseError(e)
+        })?.submission_id;
+
+        info!("Submission record created with id: {}", submission_id);
 
         let worker_task = WorkerTask {
             code: request.code.clone(),
@@ -85,29 +105,44 @@ pub async fn submit_problem(
             user_id: auth.user_id,
             submission_id,
         };
+
         channel
             .exchange_declare(
                 "code",
-                // &request.env,
                 lapin::ExchangeKind::Direct,
                 ExchangeDeclareOptions::default(),
                 FieldTable::default(),
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                error!("Failed to declare exchange: {}", e);
+                SubmitError::QueueError(e)
+            })?;
+
         channel
             .basic_publish(
                 "code",
                 &request.env,
-                // "",
                 BasicPublishOptions::default(),
                 serde_json::to_vec(&worker_task).unwrap().as_ref(),
                 BasicProperties::default(),
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                error!("Failed to publish to queue: {}", e);
+                SubmitError::QueueError(e)
+            })?;
+
+        info!(
+            "Submission published to queue successfully. submission_id: {}",
+            submission_id
+        );
+
         Ok(HttpResponse::Ok().json(json!({
             "submission_id" : submission_id
         })))
     } else {
+        warn!("Unauthorized submission attempt");
         Ok(HttpResponse::Unauthorized().finish())
     }
 }

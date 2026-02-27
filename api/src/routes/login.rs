@@ -3,6 +3,7 @@ use anyhow::Context;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::{Engine as _, engine::general_purpose};
 use std::future::{Ready, ready};
+use tracing::{error, info, instrument, warn};
 use validator::Validate;
 
 use actix_web::{
@@ -80,33 +81,37 @@ pub struct Credentials {
 fn extract_credentials(auth_header: &HeaderValue) -> Result<Credentials, LoginError> {
     let auth_str = auth_header.to_str().context("Non Ascii not allowed")?;
 
-    let base64_encoded =
-        auth_str
-            .strip_prefix("Basic ")
-            .ok_or(LoginError::Invalid(anyhow::anyhow!(
-                "Invalid basic auth format"
-            )))?;
+    let base64_encoded = auth_str.strip_prefix("Basic ").ok_or_else(|| {
+        warn!("Invalid basic auth format");
+        LoginError::Invalid(anyhow::anyhow!("Invalid basic auth format"))
+    })?;
 
     let base64_decoded_bytes = general_purpose::STANDARD
         .decode(base64_encoded)
-        .map_err(|_| LoginError::Invalid(anyhow::anyhow!("Invalid base64 encoded")))?;
+        .map_err(|_| {
+            warn!("Invalid base64 encoding");
+            LoginError::Invalid(anyhow::anyhow!("Invalid base64 encoded"))
+        })?;
 
     let base64_decoded_string =
         String::from_utf8(base64_decoded_bytes).context("Decoded string is not valid utf8")?;
-    let (username, password) = base64_decoded_string.split_at(
-        base64_decoded_string
-            .find(':')
-            .ok_or(anyhow::anyhow!("No colon separating username and password"))?,
-    );
+    let (username, password) =
+        base64_decoded_string.split_at(base64_decoded_string.find(':').ok_or_else(|| {
+            warn!("Missing colon in credentials");
+            anyhow::anyhow!("No colon separating username and password")
+        })?);
 
     let creds = Credentials {
         username: username.to_string(),
         password: password[1..].to_string(),
     };
 
-    creds
-        .validate()
-        .map_err(|e| LoginError::Invalid(anyhow::anyhow!("Error validating credentials")))?;
+    creds.validate().map_err(|e| {
+        warn!("Credentials validation failed");
+        LoginError::Invalid(anyhow::anyhow!("Error validating credentials"))
+    })?;
+
+    info!("Credentials extracted and validated");
     Ok(creds)
 }
 
@@ -128,31 +133,45 @@ impl FromRequest for Credentials {
     }
 }
 
+#[instrument(skip(credentials, pgpool, session), fields(user_id = tracing::field::Empty))]
 pub async fn login(
     credentials: Credentials,
     pgpool: Data<PgPool>,
     session: Session,
 ) -> Result<HttpResponse, LoginError> {
+    info!("Login attempt initiated");
     let row = sqlx::query!(
         r#"SELECT user_id,password,role,verification_token from users  WHERE username=$1"#,
         credentials.username,
     )
     .fetch_one(pgpool.as_ref())
-    .await?;
+    .await
+    .map_err(|e| {
+        warn!("User lookup failed");
+        LoginError::DatabaseError(e)
+    })?;
+
+    tracing::Span::current().record("user_id", &row.user_id);
 
     if row.verification_token.is_some() {
+        warn!("Login attempt for unverified user");
         return Ok(HttpResponse::Forbidden().body("Not verified. Check your mail for verfication"));
     }
 
     let argon2 = Argon2::default();
 
-    let phc = PasswordHash::new(&row.password)
-        .map_err(|_| LoginError::Invalid(anyhow::anyhow!("Wrong phc stored")))?;
+    let phc = PasswordHash::new(&row.password).map_err(|_| {
+        error!("Invalid password hash in database");
+        LoginError::Invalid(anyhow::anyhow!("Wrong phc stored"))
+    })?;
 
     match argon2.verify_password(credentials.password.as_bytes(), &phc) {
         Ok(_) => {
+            info!("Password verification successful, user_id: {}", row.user_id);
+
             if let Ok(Some(_user_id)) = session.get::<SessionAuth>("auth") {
                 session.renew();
+                info!("Session renewed");
             } else {
                 let role: Role = Role::try_from(row.role.as_ref()).unwrap();
                 session
@@ -160,13 +179,23 @@ pub async fn login(
                         "auth",
                         SessionAuth {
                             user_id: row.user_id,
-                            role,
+                            role: role.clone(),
                         },
                     )
-                    .unwrap();
+                    .map_err(|e| {
+                        error!("Failed to insert session");
+                        LoginError::SessionInsertError(e)
+                    })?;
+                info!(
+                    "Session established for user_id: {}, role: {:?}",
+                    row.user_id, role
+                );
             }
             Ok(HttpResponse::Ok().finish())
         }
-        Err(_) => Ok(HttpResponse::Unauthorized().finish()),
+        Err(_) => {
+            warn!("Password verification failed");
+            Ok(HttpResponse::Unauthorized().finish())
+        }
     }
 }

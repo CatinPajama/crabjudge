@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::docker::ExecOutput;
 use crate::error::ExecError;
 use crate::pool::ContainerGroup;
@@ -8,12 +10,11 @@ use futures_util::StreamExt;
 use lapin::{Channel, Consumer, ExchangeKind, options::*, types::FieldTable};
 use models::{ExecStatus, RuntimeConfig, WorkerTask};
 use sqlx::PgPool;
-use std::time::{Duration, Instant};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::future::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+use tracing::{debug, error, info, instrument, warn};
 
 fn are_equal_ignore_whitespace(s1: &str, s2: &str) -> bool {
     let s1_filtered: String = s1.chars().filter(|c| !c.is_whitespace()).collect();
@@ -26,6 +27,8 @@ pub async fn declare_queue_exchange(
     queue: &str,
     exchange: &str,
 ) -> lapin::Result<()> {
+    debug!("Declaring queue: {}, exchange: {}", queue, exchange);
+
     channel
         .queue_declare("dlq", QueueDeclareOptions::default(), FieldTable::default())
         .await?;
@@ -135,11 +138,24 @@ pub async fn exec_testcase(
         "-c".into(),
         format!("printf '%s' \"$1\" > /tmp/file && {}", command),
         "--".into(),
+        // DO NOT log or record `code` - keep payloads out of logs
         code.into(),
     ];
-    println!("{:?}", cmd);
 
-    Ok(crate::docker::run_exec(&docker_task, container_id, cmd, testcase).await?)
+    info!(
+        "Starting exec in container {} with timeout {}s",
+        container_id, timeout
+    );
+    match crate::docker::run_exec(&docker_task, container_id, cmd, testcase).await {
+        Ok(out) => {
+            info!("Exec finished with exit_code={}", out.exit_code);
+            Ok(out)
+        }
+        Err(e) => {
+            error!("Exec failed in container {}: {}", container_id, e);
+            Err(ExecError::DockerError(e))
+        }
+    }
 }
 async fn get_consumer(
     queue: &str,
@@ -176,14 +192,21 @@ async fn listen<T: TestcaseHandler>(
     token: CancellationToken,
 ) -> Result<(), ExecError> {
     while let Some(delivery) = consumer.next().await {
-        let delivery = delivery?;
+        let delivery = match delivery {
+            Ok(d) => d,
+            Err(e) => {
+                error!("Error receiving delivery from queue: {}", e);
+                continue;
+            }
+        };
         let docker_task = docker.clone();
         let pgpool = pgpool.clone();
         let compile_config = compile_config.clone();
         let conn: Object<ContainerGroup> = pool.get().await?;
         let task = serde_json::from_slice(&delivery.data);
         match task {
-            Err(_) => {
+            Err(e) => {
+                warn!("Failed to parse worker task: {}", e);
                 delivery
                     .nack(BasicNackOptions {
                         multiple: false,
@@ -246,33 +269,6 @@ async fn handle_delivery<T: TestcaseHandler>(
         }
     }
 }
-/*
-async fn handle_delivery<T: TestcaseHandler>(
-    compile_config: &CompileConfig,
-    delivery: lapin::message::Delivery,
-    docker_task: Docker,
-    run: String,
-    compile: Option<String>,
-    pgpool: sqlx::Pool<sqlx::Postgres>,
-    conn: Object<ContainerGroup>,
-    task: WorkerTask,
-    token: CancellationToken,
-) -> impl Future<Output = Result<bool, lapin::Error>> {
-        match output {
-            Ok(()) => delivery.ack(BasicAckOptions::default()).await,
-            Err(_) => {
-                delivery
-                    .nack(BasicNackOptions {
-                        multiple: true,
-                        requeue: true,
-                    })
-                .await
-            }
-        }
-    }
-    }
-}
-*/
 
 pub struct Testcase {
     testcase: String,
@@ -280,11 +276,12 @@ pub struct Testcase {
 }
 
 async fn fetch_testcase(pgpool: &PgPool, problem_id: i64) -> Result<Testcase, sqlx::Error> {
+    info!("Fetching testcase for problem_id {}", problem_id);
     let backoff = ExponentialBackoffBuilder::new()
         .with_max_elapsed_time(Some(Duration::from_secs(10)))
         .build();
 
-    backoff::future::retry(backoff, || async {
+    let res = backoff::future::retry(backoff, || async {
         Ok(sqlx::query_as!(
             Testcase,
             "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
@@ -293,9 +290,24 @@ async fn fetch_testcase(pgpool: &PgPool, problem_id: i64) -> Result<Testcase, sq
         .fetch_one(pgpool)
         .await?)
     })
-    .await
+    .await;
+
+    match res {
+        Ok(tc) => {
+            info!("Fetched testcase for problem_id {}", problem_id);
+            Ok(tc)
+        }
+        Err(e) => {
+            error!(
+                "Failed to fetch testcase for problem_id {}: {}",
+                problem_id, e
+            );
+            Err(e)
+        }
+    }
 }
 
+#[instrument(skip(docker_task, compile_config, pgpool, container, task), fields(user_id = tracing::field::Empty, submission_id = tracing::field::Empty))]
 async fn handle_message<T: TestcaseHandler>(
     docker_task: Docker,
     compile_config: CompileConfig,
@@ -303,11 +315,26 @@ async fn handle_message<T: TestcaseHandler>(
     container: Object<ContainerGroup>,
     task: WorkerTask,
 ) -> Result<(), ExecError> {
-    let total_start = Instant::now();
+    tracing::Span::current().record("user_id", &task.user_id);
+    tracing::Span::current().record("submission_id", &task.submission_id);
 
-    let testcase = fetch_testcase(&pgpool, task.problem_id).await?;
+    info!(
+        "Handling task for submission_id={} problem_id={} user_id={}",
+        task.submission_id, task.problem_id, task.user_id
+    );
 
-    let exec_output = exec_testcase(
+    let testcase = match fetch_testcase(&pgpool, task.problem_id).await {
+        Ok(tc) => tc,
+        Err(e) => {
+            error!(
+                "Failed to fetch testcase for submission {}: {}",
+                task.submission_id, e
+            );
+            return Err(ExecError::DatabaseError(e));
+        }
+    };
+
+    let exec_output = match exec_testcase(
         docker_task,
         &container.id,
         &task.code,
@@ -316,15 +343,31 @@ async fn handle_message<T: TestcaseHandler>(
         &compile_config.run,
         compile_config.timeout,
     )
-    .await?;
-    T::handle_testcase(pgpool, task, testcase.output, exec_output).await?;
-
-    let total_dur = total_start.elapsed().as_millis();
-    let ts_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    println!("Total duration: {} ms and {}", total_dur, ts_ms);
+    .await
+    {
+        Ok(out) => out,
+        Err(e) => {
+            error!(
+                "Execution failed for submission {}: {}",
+                task.submission_id, e
+            );
+            return Err(e);
+        }
+    };
+    let submission_id = task.submission_id;
+    match T::handle_testcase(pgpool, task, testcase.output, exec_output).await {
+        Ok(()) => info!(
+            "Finished evaluating and updating database for submission_id={}",
+            submission_id
+        ),
+        Err(e) => {
+            error!(
+                "Failed to handle testcase result for submission {}: {}",
+                submission_id, e
+            );
+            return Err(e);
+        }
+    }
     Ok(())
 }
 
@@ -334,11 +377,15 @@ async fn update_submit_status(
     output: String,
     status: &str,
 ) -> Result<(), sqlx::Error> {
+    info!(
+        "Updating submit_status submission_id={} status={}",
+        submission_id, status
+    );
     let backoff: ExponentialBackoff = ExponentialBackoffBuilder::new()
         .with_max_elapsed_time(Some(Duration::from_secs(10)))
         .build();
 
-    backoff::future::retry(backoff, || async {
+    let res = backoff::future::retry(backoff, || async {
         sqlx::query!(
             "UPDATE submit_status SET output=$1, status=$2 WHERE submission_id=$3",
             output,
@@ -349,7 +396,21 @@ async fn update_submit_status(
         .await?;
         Ok(())
     })
-    .await
+    .await;
+
+    match res {
+        Ok(()) => {
+            info!("Updated submit_status for submission_id={}", submission_id);
+            Ok(())
+        }
+        Err(e) => {
+            error!(
+                "Failed to update submit_status for submission_id={} : {}",
+                submission_id, e
+            );
+            Err(e)
+        }
+    }
 }
 pub trait TestcaseHandler {
     fn handle_testcase(
@@ -372,19 +433,21 @@ pub trait TestcaseHandler {
                 }
             }
             .into();
-            println!("task submission id is {}", task.submission_id);
             update_submit_status(&pgpool, task.submission_id, exec_output.output, status).await?;
             Ok(())
         }
     }
 }
 
+#[instrument(skip(conn, pgpool, docker), fields(env = %runtime.env))]
 pub async fn execute<T: TestcaseHandler>(
     runtime: RuntimeConfig,
     conn: lapin::Connection,
     pgpool: PgPool,
     docker: Docker,
 ) {
+    info!("Worker started for environment: {}", runtime.env);
+
     let channel = conn.create_channel().await.expect("Error creating channel");
     let manager = ContainerGroup::new(
         docker.clone(),
@@ -398,9 +461,14 @@ pub async fn execute<T: TestcaseHandler>(
         .max_size(2)
         .build()
         .expect("Error creating docker pool");
+
+    info!("Docker pool created with max_size: 2");
+
     let consumer = get_consumer(&runtime.env, "code", channel)
         .await
         .expect("Unable to get consumer");
+
+    info!("Consumer started for environment: {}", runtime.env);
 
     let token = CancellationToken::new();
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
@@ -413,14 +481,17 @@ pub async fn execute<T: TestcaseHandler>(
     let task_tracker = TaskTracker::new();
     tokio::select! {
         _ = listen::<T>(task_tracker.clone(),&docker, &docker_pool, pgpool, compile_config, consumer, token.clone()) => {
+            info!("Listen loop ended");
             docker_pool.manager().close().await;
         },
         _ = tokio::signal::ctrl_c()  => {
+            info!("CTRL-C signal received, shutting down");
             task_tracker.close();
             token.cancel();
             docker_pool.manager().close().await;
         },
         _ = sigterm.recv() => {
+            info!("SIGTERM signal received, shutting down");
             task_tracker.close();
             token.cancel();
             docker_pool.manager().close().await;
