@@ -1,15 +1,14 @@
 use crate::docker::ExecOutput;
 use crate::error::ExecError;
 use crate::pool::ContainerGroup;
-use backoff::ExponentialBackoff;
+use backoff::{ExponentialBackoff, ExponentialBackoffBuilder};
 use bollard::Docker;
 use deadpool::managed::{self, Object, Pool};
-use futures::future::join_all;
 use futures_util::StreamExt;
-use lapin::{Channel, Consumer, options::*, types::FieldTable};
+use lapin::{Channel, Consumer, ExchangeKind, options::*, types::FieldTable};
 use models::{ExecStatus, RuntimeConfig, WorkerTask};
 use sqlx::PgPool;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::future::FutureExt;
@@ -22,6 +21,70 @@ fn are_equal_ignore_whitespace(s1: &str, s2: &str) -> bool {
     s1_filtered == s2_filtered
 }
 
+pub async fn declare_queue_exchange(
+    channel: &Channel,
+    queue: &str,
+    exchange: &str,
+) -> lapin::Result<()> {
+    channel
+        .queue_declare("dlq", QueueDeclareOptions::default(), FieldTable::default())
+        .await?;
+
+    channel
+        .exchange_declare(
+            "dlx",
+            ExchangeKind::Direct,
+            ExchangeDeclareOptions::default(),
+            FieldTable::default(),
+        )
+        .await?;
+
+    channel
+        .queue_bind(
+            "dlq",
+            "dlx",
+            "dlq",
+            QueueBindOptions::default(),
+            FieldTable::default(),
+        )
+        .await?;
+
+    channel
+        .exchange_declare(
+            exchange,
+            ExchangeKind::Direct,
+            ExchangeDeclareOptions::default(),
+            FieldTable::default(),
+        )
+        .await?;
+
+    let mut args = FieldTable::default();
+    args.insert(
+        "x-dead-letter-exchange".into(),
+        lapin::types::AMQPValue::LongString("dlx".into()),
+    );
+    args.insert(
+        "x-dead-letter-routing-key".into(),
+        lapin::types::AMQPValue::LongString("dlq".into()),
+    );
+
+    channel
+        .queue_declare(queue, QueueDeclareOptions::default(), args)
+        .await?;
+
+    channel
+        .queue_bind(
+            queue,
+            exchange,
+            queue,
+            QueueBindOptions::default(),
+            FieldTable::default(),
+        )
+        .await?;
+
+    Ok(())
+}
+/*
 async fn declare_queue_exchange(
     channel: &Channel,
     queue: &str,
@@ -52,7 +115,7 @@ async fn declare_queue_exchange(
 
     Ok(())
 }
-
+*/
 pub async fn exec_testcase(
     docker_task: Docker,
     container_id: &str,
@@ -95,6 +158,7 @@ async fn get_consumer(
         .await
 }
 
+#[derive(Clone)]
 pub struct CompileConfig {
     compile: Option<String>,
     run: String,
@@ -114,52 +178,73 @@ async fn listen<T: TestcaseHandler>(
     while let Some(delivery) = consumer.next().await {
         let delivery = delivery?;
         let docker_task = docker.clone();
-        let run = compile_config.run.clone();
-        let compile = compile_config.compile.clone();
         let pgpool = pgpool.clone();
-
+        let compile_config = compile_config.clone();
         let conn: Object<ContainerGroup> = pool.get().await?;
-        let task: WorkerTask =
-            serde_json::from_slice(&delivery.data).map_err(|_| ExecError::ParseError)?;
-        let token = token.clone();
-        task_tracker.spawn(async move {
-            match handle_message::<T>(
-                docker_task,
-                compile,
-                run,
-                compile_config.timeout,
-                pgpool,
-                conn,
-                task,
-            )
-            .with_cancellation_token_owned(token)
-            .await
-            {
-                Some(output) => match output {
-                    Ok(()) => delivery.ack(BasicAckOptions::default()).await,
-                    Err(_) => {
-                        delivery
-                            .nack(BasicNackOptions {
-                                multiple: true,
-                                requeue: true,
-                            })
-                            .await
-                    }
-                },
-                None => {
-                    delivery
-                        .nack(BasicNackOptions {
-                            multiple: true,
-                            requeue: true,
-                        })
-                        .await
-                }
+        let task = serde_json::from_slice(&delivery.data);
+        match task {
+            Err(_) => {
+                delivery
+                    .nack(BasicNackOptions {
+                        multiple: false,
+                        requeue: false,
+                    })
+                    .await?;
             }
-        });
+            Ok(task) => {
+                let token = token.clone();
+                task_tracker.spawn(async move {
+                    handle_delivery::<T>(
+                        delivery,
+                        docker_task,
+                        pgpool,
+                        compile_config,
+                        conn,
+                        task,
+                        token,
+                    )
+                    .await
+                });
+            }
+        }
     }
     task_tracker.wait().await;
-    // join_all(handles).await;
     Ok(())
+}
+
+async fn handle_delivery<T: TestcaseHandler>(
+    delivery: lapin::message::Delivery,
+    docker_task: Docker,
+    pgpool: sqlx::Pool<sqlx::Postgres>,
+    compile_config: CompileConfig,
+    conn: Object<ContainerGroup>,
+    task: WorkerTask,
+    token: CancellationToken,
+) -> Result<bool, lapin::Error> {
+    match handle_message::<T>(docker_task, compile_config, pgpool, conn, task)
+        .with_cancellation_token_owned(token)
+        .await
+    {
+        Some(output) => match output {
+            Ok(()) => delivery.ack(BasicAckOptions::default()).await,
+            Err(_) => {
+                delivery
+                    .nack(BasicNackOptions {
+                        multiple: false,
+                        requeue: false,
+                    })
+                    .await
+            }
+        },
+        None => {
+            delivery
+                .nack(BasicNackOptions {
+                    multiple: true,
+                    requeue: true,
+                })
+                .await
+        }
+    }
 }
 /*
 async fn handle_delivery<T: TestcaseHandler>(
@@ -195,7 +280,11 @@ pub struct Testcase {
 }
 
 async fn fetch_testcase(pgpool: &PgPool, problem_id: i64) -> Result<Testcase, sqlx::Error> {
-    backoff::future::retry(ExponentialBackoff::default(), || async {
+    let backoff = ExponentialBackoffBuilder::new()
+        .with_max_elapsed_time(Some(Duration::from_secs(10)))
+        .build();
+
+    backoff::future::retry(backoff, || async {
         Ok(sqlx::query_as!(
             Testcase,
             "SELECT testcase,output from problem_testcases WHERE problem_id=$1",
@@ -209,9 +298,7 @@ async fn fetch_testcase(pgpool: &PgPool, problem_id: i64) -> Result<Testcase, sq
 
 async fn handle_message<T: TestcaseHandler>(
     docker_task: Docker,
-    compile: Option<String>,
-    run: String,
-    timeout: u8,
+    compile_config: CompileConfig,
     pgpool: sqlx::Pool<sqlx::Postgres>,
     container: Object<ContainerGroup>,
     task: WorkerTask,
@@ -225,9 +312,9 @@ async fn handle_message<T: TestcaseHandler>(
         &container.id,
         &task.code,
         &testcase.testcase,
-        &compile,
-        &run,
-        timeout,
+        &compile_config.compile,
+        &compile_config.run,
+        compile_config.timeout,
     )
     .await?;
     T::handle_testcase(pgpool, task, testcase.output, exec_output).await?;
@@ -247,7 +334,11 @@ async fn update_submit_status(
     output: String,
     status: &str,
 ) -> Result<(), sqlx::Error> {
-    backoff::future::retry(ExponentialBackoff::default(), || async {
+    let backoff: ExponentialBackoff = ExponentialBackoffBuilder::new()
+        .with_max_elapsed_time(Some(Duration::from_secs(10)))
+        .build();
+
+    backoff::future::retry(backoff, || async {
         sqlx::query!(
             "UPDATE submit_status SET output=$1, status=$2 WHERE submission_id=$3",
             output,
@@ -304,7 +395,7 @@ pub async fn execute<T: TestcaseHandler>(
     .await
     .expect("Error creating Pool Manager");
     let docker_pool = Pool::builder(manager)
-        .max_size(6)
+        .max_size(2)
         .build()
         .expect("Error creating docker pool");
     let consumer = get_consumer(&runtime.env, "code", channel)
