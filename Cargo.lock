@@ -412,6 +412,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "uuid",
+ "validator",
 ]
 
 [[package]]

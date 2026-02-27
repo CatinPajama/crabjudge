@@ -3,6 +3,7 @@ use actix_web::{
     HttpResponse, ResponseError,
     web::{self, Data},
 };
+use validator::Validate;
 
 use lapin::{
     BasicProperties,
@@ -15,9 +16,11 @@ use sqlx::PgPool;
 
 use crate::routes::session::SessionAuth;
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Validate)]
 pub struct SubmitJson {
+    #[validate(length(min = 1, message = "Code cannot be empty"))]
     code: String,
+    #[validate(length(min = 1, max = 50, message = "Environment must be specified"))]
     env: String,
 }
 
@@ -31,12 +34,16 @@ pub enum SubmitError {
 
     #[error("No such environment {0}")]
     InvalidEnvironment(String),
+
+    #[error("Validation error: {0}")]
+    Validation(#[from] anyhow::Error),
 }
 
 impl ResponseError for SubmitError {
     fn error_response(&self) -> HttpResponse<actix_web::body::BoxBody> {
         match self {
             Self::InvalidEnvironment(env) => HttpResponse::BadRequest().body(env.clone()),
+            Self::Validation(e) => HttpResponse::BadRequest().body(e.to_string()),
             Self::QueueError(e) => HttpResponse::InternalServerError().body(e.to_string()),
             Self::DatabaseError(e) => HttpResponse::InternalServerError().body(e.to_string()),
         }
@@ -51,6 +58,11 @@ pub async fn submit_problem(
     runtimeconfigs: Data<RuntimeConfigs>,
     pg_pool: Data<PgPool>,
 ) -> Result<HttpResponse, SubmitError> {
+    // validate payload
+    request
+        .validate()
+        .map_err(|e| SubmitError::Validation(anyhow::anyhow!(e)))?;
+
     // sanitize code size
     if let Ok(Some(auth)) = session.get::<SessionAuth>("auth") {
         if !runtimeconfigs.0.contains_key(&request.env) {

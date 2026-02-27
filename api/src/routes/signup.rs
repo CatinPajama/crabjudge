@@ -1,3 +1,4 @@
+use crate::ApplicationBaseUrl;
 use actix_web::cookie::time::Duration;
 use actix_web::web::Data;
 use actix_web::{HttpResponse, ResponseError, cookie::Cookie, web::Form};
@@ -6,9 +7,7 @@ use rand::RngExt;
 use rand::distr::Alphanumeric;
 use serde::Deserialize;
 use sqlx::PgPool;
-
-use crate::ApplicationBaseUrl;
-
+use validator::Validate;
 #[derive(thiserror::Error)]
 pub enum SignupError {
     #[error("Signup Error : {0}")]
@@ -59,8 +58,9 @@ impl ResponseError for SignupError {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
 pub struct SignupForm {
+    #[validate(email(message = "Invalid email format"))]
     email: String,
 }
 
@@ -78,6 +78,10 @@ pub async fn signup(
     email_client: Data<EmailClient>,
     application_base_url: Data<ApplicationBaseUrl>,
 ) -> Result<HttpResponse, SignupError> {
+    // perform request validation first
+    form.validate()
+        .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
+
     let receiver_email = SubscriberEmail::parse(form.email.to_owned())
         .map_err(|e| SignupError::Invalid(anyhow::anyhow!(e)))?;
     let verification_token = generate_verification_token();

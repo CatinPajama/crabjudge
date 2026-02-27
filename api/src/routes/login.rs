@@ -3,6 +3,7 @@ use anyhow::Context;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use base64::{Engine as _, engine::general_purpose};
 use std::future::{Ready, ready};
+use validator::Validate;
 
 use actix_web::{
     FromRequest, HttpResponse, ResponseError,
@@ -68,8 +69,11 @@ impl ResponseError for LoginError {
     }
 }
 
+#[derive(Validate)]
 pub struct Credentials {
+    #[validate(length(min = 3, max = 100))]
     pub username: String,
+    #[validate(length(min = 8, max = 100))]
     pub password: String, // TODO use secret package
 }
 
@@ -95,10 +99,15 @@ fn extract_credentials(auth_header: &HeaderValue) -> Result<Credentials, LoginEr
             .ok_or(anyhow::anyhow!("No colon separating username and password"))?,
     );
 
-    Ok(Credentials {
+    let creds = Credentials {
         username: username.to_string(),
         password: password[1..].to_string(),
-    })
+    };
+
+    creds
+        .validate()
+        .map_err(|e| LoginError::Invalid(anyhow::anyhow!("Error validating credentials")))?;
+    Ok(creds)
 }
 
 impl FromRequest for Credentials {
