@@ -1,15 +1,19 @@
 use std::net::TcpListener;
+use std::time::Duration;
 
 use crate::ApiSettings;
 use crate::routes::create_problem::post::create_problem;
+use crate::routes::session::SessionAuth;
 use crate::routes::{
     list_problems, login, signup_confirmation, stats, status, submissions, submit_problem,
 };
 use crate::routes::{problem, signup};
 use actix_cors::Cors;
-use actix_session::SessionMiddleware;
+use actix_limitation::{Limiter, RateLimiter};
 use actix_session::storage::RedisSessionStore;
+use actix_session::{SessionExt, SessionMiddleware};
 use actix_web::cookie::Key;
+use actix_web::dev::ServiceRequest;
 use actix_web::{
     App,
     dev::Server,
@@ -52,10 +56,25 @@ impl Application {
             lapin::ConnectionProperties::default(),
         )
         .await?;
+
+        let limiter = Limiter::builder(&settings.redis.url())
+            .key_by(|req: &ServiceRequest| {
+                req.get_session()
+                    .get::<SessionAuth>("auth")
+                    .ok()
+                    .flatten()
+                    .map(|auth| auth.user_id.to_string())
+            })
+            .limit(20)
+            .period(Duration::from_secs(5))
+            .build()
+            .unwrap();
+
         let server = run(
             pgpool,
             listener,
             redis_store,
+            limiter,
             rabbitmq_conn,
             email_client,
             settings.runtimeconfigs,
@@ -79,6 +98,7 @@ pub async fn run(
     pgpool: PgPool,
     listener: TcpListener,
     redis_store: RedisSessionStore,
+    limiter: Limiter,
     rabbitmq_conn: lapin::Connection,
     email_client: EmailClient,
     runtimeconfigs: RuntimeConfigs,
@@ -90,7 +110,7 @@ pub async fn run(
     let email_client = Data::new(email_client);
     let application_base_url = Data::new(ApplicationBaseUrl(base_url));
     let secret_key = Key::generate();
-
+    let data_limiter = Data::new(limiter);
     let server = actix_web::HttpServer::new(move || {
         let cors = Cors::default()
             .allowed_origin("http://127.0.0.1:5173")
@@ -105,12 +125,14 @@ pub async fn run(
             .max_age(3600);
         App::new()
             .wrap(cors)
+            .wrap(RateLimiter::default())
             .wrap(
                 SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
                     .cookie_secure(false)
                     .cookie_http_only(true)
                     .build(),
             )
+            .app_data(data_limiter.clone())
             .app_data(data_pgpool.clone())
             .app_data(data_rabbitmq.clone())
             .app_data(data_runtimeconfigs.clone())
