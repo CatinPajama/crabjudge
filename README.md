@@ -1,238 +1,197 @@
 # CrabJudge
 
-CrabJudge is an online judge prototype written in Rust. It consists of an HTTP API that handles user authentication and code submissions, a worker that executes submitted code inside Docker containers with resource limits, and shared models + configuration utilities.
+[![Rust](https://img.shields.io/badge/Rust-1.9x+-black?logo=rust)](https://www.rust-lang.org/)
+[![Actix Web](https://img.shields.io/badge/Actix-Web-blue)](https://actix.rs/)
+[![Next.js](https://img.shields.io/badge/Next.js-Frontend-black?logo=next.js)](https://nextjs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-316192?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-Session%20%26%20Rate%20Limit-red?logo=redis&logoColor=white)](https://redis.io/)
+[![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Queue-orange?logo=rabbitmq&logoColor=white)](https://www.rabbitmq.com/)
+[![Docker](https://img.shields.io/badge/Docker-Containers-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-
-
-
+CrabJudge is a Rust-based online judge platform with a Next.js frontend. It supports authenticated submissions, asynchronous judging via workers, runtime-based code execution inside isolated Docker containers, and real-time result polling.
 
 https://github.com/user-attachments/assets/67a08b55-11da-404b-8241-36216fc86b3e
 
+---
 
+## Features
 
+- **Email-verified signup** with token-based confirmation flow
+- **Session-based authentication** backed by Redis
+- **Problem listing & retrieval** with difficulty levels
+- **Multi-language code submission** — runtime environment is configurable (Python, C++, JavaScript, etc.)
+- **Live status polling** — clients poll submission status until judging completes
+- **Per-user stats** — solved problems grouped by difficulty, rendered as charts
+- **Role-based access** — `User`, `ProblemSetter`, and `Admin` roles with hierarchical permissions
+- **Rate limiting** — per-user API rate limits powered by Redis
 
-## Overview / System Design
+---
+
+## Architecture
+
+CrabJudge follows a decoupled **API + Worker** design connected by a message queue.
 
 ### Components
 
-1. **API** (Actix-web)
-   - Handles signup/login with Argon2 password hashing
-   - Session management via Redis
-   - Receives code submissions and publishes tasks to RabbitMQ
-   - Routes: `/signup`, `/login`, `/{problemID}/submit`, `/{submissionID}/status`, etc.
+| Component | Role |
+|---|---|
+| **API** (Actix Web) | Handles auth, sessions, problem/submission endpoints, and publishes tasks to RabbitMQ |
+| **Worker** (Tokio + Bollard) | Consumes queue messages, executes user code in isolated Docker containers, writes results back to the database |
+| **PostgreSQL** | Persistent storage for users, problems, testcases, and submission statuses |
+| **Redis** | Session store and request rate-limiting backend |
+| **RabbitMQ** | Asynchronous transport between the API and worker, with dead-letter routing for failed tasks |
+| **Frontend** (Next.js) | Server-rendered problem pages, client-side code editor (Monaco), submission UI with live polling |
 
-2. **Worker** (Tokio async runtime)
-   - Spawns one listener per runtime (e.g., python:3.12, node:20, gcc)
-   - Consumes messages from RabbitMQ exchanges
-   - Uses a deadpool-based container pool to reuse Docker containers
-   - Executes code with STDIN/STDOUT and enforces timeouts/memory limits
-   - Writes results to `submit_status` table
+### Submission Flow
 
-3. **Container Manager / Pool**
-   - Creates Docker containers from images on startup (once per runtime)
-   - Reuses containers via deadpool's `Manager` trait
-   - Tracks created container IDs and performs best-effort cleanup on shutdown
-   - Supports configurable memory limits and timeout per runtime
+1. Client sends `POST /{problemID}/submit` with code and target runtime
+2. API validates the session and runtime environment, inserts a `PENDING` submission record into PostgreSQL
+3. API publishes a `WorkerTask` to the RabbitMQ **`code`** exchange, routed by runtime key (e.g. `python:3.12`, `gcc`)
+4. Worker consumes the message, acquires a pooled Docker container, copies the code in, and executes it with the problem's testcase as stdin
+5. Worker compares output against the expected result (whitespace-normalized), then writes the final status (`PASSED`, `WRONG ANSWER`, `TLE`, `MLE`, `SEGFAULT`) and output back to PostgreSQL
+6. Client polls `GET /{submissionID}/status` until the status is no longer `PENDING`
 
-4. **Docker Execution**
-   - Uses Docker API (via bollard crate) to exec commands inside containers
-   - Pipes user code to stdin, captures stdout/stderr
-   - Records exit codes (137=OOM, 139=SIGSEGV, 124=timeout, etc.)
+### Frontend ↔ Backend
 
-5. **Configuration Loader**
-   - Loads YAML configs from `configuration/<env>.yaml` (default: `local`)
-
-### Message Flow
-
-```
-1. Client calls POST /{problemID}/submit (API)
-   ↓
-2. API validates session & environment, creates submit_status row
-   ↓
-3. API publishes WorkerTask JSON to RabbitMQ exchange named by runtime key (e.g., "python:3.12")
-   ↓
-4. Worker consumes message from queue, obtains container from pool
-   ↓
-5. Worker fetches testcase from DB, executes code in container with timeout/memory limits
-   ↓
-6. Worker compares output, writes status + output to submit_status row
-   ↓
-7. Client queries GET /{submissionID}/status to retrieve result
-```
-
-
-## Configuration
-
-Config is loaded from `configuration/<env>.yaml` (default env is `local`) or via environment variables. Files are YAML-based:
-
-
-- appliation — API host & port
-- database — PostgreSQL connection details
-- redis — Redis host & port (for sessions)
-- rabbitmq — RabbitMQ connection details
-- runtimeconfigs — Per-runtime configs (image, compile cmd, run cmd, timeout, memory)
-
-
-See [configuration/local.yaml](configuration/local.yaml) for examples.
+The Next.js frontend proxies API requests through its own route handlers under `app/api/`. This keeps the backend URL server-side only and forwards session cookies transparently.
 
 ---
 
-## Setup (Local Development)
+## Redis Usage
+
+Redis serves two purposes:
+
+- **Session storage** — `SessionAuth` payloads (user ID + role) are stored in Redis-backed sessions via `actix-session`. This keeps authentication checks fast and allows the API to remain stateless across restarts.
+- **Rate limiting** — `actix-limitation` uses Redis to enforce per-user request quotas, keyed by the authenticated user's ID.
+
+---
+
+## RabbitMQ Queues & Dead Lettering
+
+- The API publishes submissions to exchange **`code`** with the routing key set to the runtime environment name (e.g. `python:3.12`, `gcc`).
+- Each worker declares and binds its own runtime queue, then consumes from it.
+- All runtime queues are configured with dead-letter routing:
+  - **Dead-letter exchange:** `dlx`
+  - **Dead-letter queue:** `dlq`
+- If a worker fails to process a message (container crash, DB error, etc.), the message is nacked without requeue and routed to `dlq` for inspection or retry — no tasks are silently lost.
+
+---
+
+## Error Handling & Fault Tolerance
+
+- **API** uses structured `ResponseError` implementations per route, mapping validation errors to `400`, DB/queue failures to `500`, and auth failures to `401`/`403`.
+- **Worker** uses a typed `ExecError` enum covering database, Docker, queue, and pool failures.
+- Testcase fetching uses **exponential backoff** to handle transient database connectivity issues.
+- **Graceful shutdown** — the worker listens for `SIGTERM` and `CTRL-C`, cancels in-flight tasks via a `CancellationToken`, waits for the `TaskTracker` to drain, and tears down the container pool cleanly.
+- **Container isolation** — each submission runs in a Docker container with `--network=none`, a hard memory limit + swap cap, a PID limit of 16, and `no-new-privileges` security option. A configurable timeout kills long-running processes.
+- **Output comparison** normalizes trailing whitespace and newlines to reduce false-negative wrong-answer verdicts.
+
+---
+
+## API Overview
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/signup` | Register with email, username, password |
+| `POST` | `/signup/confirmation` | Verify email with token |
+| `POST` | `/login` | Authenticate (HTTP Basic Auth) |
+| `GET` | `/problems` | List all problems (paginated) |
+| `GET` | `/problem/{problemID}` | Get a single problem |
+| `POST` | `/{problemID}/submit` | Submit code for judging |
+| `GET` | `/{submissionID}/status` | Poll submission status |
+| `GET` | `/{problemID}/submissions` | List user's submissions for a problem |
+| `GET` | `/stats` | Get user's solve stats by difficulty |
+| `POST` | `/createProblem` | Create a problem (ProblemSetter+ role required) |
+
+---
+
+## Setup
 
 ### Prerequisites
 
-- Docker and Docker daemon running (worker uses host socket at `/var/run/docker.sock`)
-- Rust toolchain (stable) and cargo
-- sqlx-cli (installed in Dockerfile, can be installed locally: `cargo install sqlx-cli --no-default-features --features postgres`)
-- Docker Compose (optional, for full-stack runs)
+- **Rust** (stable) + Cargo
+- **Docker** + Docker daemon running
+- **Node.js** 18+ and npm
+- **sqlx-cli**:
+  ```bash
+  cargo install sqlx-cli --no-default-features --features postgres
+  ```
 
-### Quick Start with Docker Compose (Recommended)
+### Option A: Docker Compose (recommended for local dev)
+
+Spin up PostgreSQL, Redis, and RabbitMQ with the dev compose file, then run the API, worker, and frontend locally:
 
 ```bash
-docker-compose up --build
+# Start infrastructure services
+docker compose -f docker-compose.dev.yaml up -d
+
+# Load environment
+cp .env.sample .env   # edit values as needed
+set -a && source .env && set +a
+
+# Run migrations
+sqlx database create
+sqlx migrate run
+
+# Start backend (in separate terminals)
+cargo run -p api
+cargo run -p worker
+
+# Start frontend
+cd crabjudge_frotend
+npm install
+npm run dev
 ```
 
-This brings up:
-- PostgreSQL (port 5432)
-- Redis (port 6379)
-- RabbitMQ (port 5672 + management UI on 15672)
-- API (port 8080)
-- Worker (listens on RabbitMQ, uses host Docker socket)
+### Option B: Full Docker Compose (production-like)
 
-The API container runs migrations automatically at startup.
-
-### Development
-
-1. Start services locally or via docker:
-   ```bash
-      docker compose -f docker-compose.dev.yaml up
-   ```
-
-2. Set environment variables:
-   Rename .env.sample to .env and set email env variables
-   ```bash
-      set -a
-      source .env
-      set +a
-   ```
-
-3. Run migrations:
-   ```bash
-   sqlx database create
-   sqlx migrate run
-   ```
-
-4. Run API and Worker in separate terminals:
-   ```bash
-   cargo run -p api
-   cargo run -p worker
-   ```
-
----
-
-## API Endpoints
-
-### POST /signup
-- **Body:** Form fields `username`, `password`, `email`
-- **Response:** 200 OK on success, 400 on invalid input, 500 on DB/email error
-- **Behavior:** Creates a user with Argon2-hashed password, role defaults to "user"
-
-### POST /login
-- **Auth:** Basic auth header (base64(username:password))
-- **Response:**
-  - 200 OK on success (inserts session into Redis)
-  - 401 Unauthorized on bad credentials
-  - 400 Bad Request on invalid input
-- **Behavior:** Session contains user_id and role
-
-### POST /{problemID}/submit
-- **Auth:** Requires session (user logged in)
-- **Body (JSON):** `{ "code": "<source_code>", "env": "<runtime_key>" }`
-- **Response:** 
-  - 200 OK with `{ "submission_id": <id> }` on success
-  - 400 if invalid env, 401 if not logged in, 500 on DB/queue error
-- **Behavior:**
-  - Validates `env` against loaded runtime configs
-  - Creates `submit_status` row with status='PENDING'
-  - Publishes [`WorkerTask`](models/src/lib.rs) JSON to RabbitMQ exchange named by `env`
-
-### GET /{submissionID}/status
-- **Auth:** Requires session
-- **Response:** JSON with `{ user_id, problem_id, status, output }`
-- **Behavior:** Fetches latest submission status from DB
-
-### GET /{problemID}/submissions
-- **Auth:** Requires session
-- **Response:** List of submission IDs for the current user/problem
-- **Query:** Filters by user_id and problem_id
-
-### GET /problem/{problemID}
-- **Auth:** None
-- **Response:** JSON with `{ problem_id, title, difficulty, statement }`
-
-### GET /problems
-- **Auth:** None
-- **Query params:** `?limit=<n>&offset=<m>` (default limit=50)
-- **Response:** Paginated list of problems
-
-### GET /stats
-- **Auth:** Requires session
-- **Response:** User's passing stats by difficulty (count of distinct problems solved)
-
-### POST /createProblem
-- **Auth:** Requires session + ProblemSetter or Admin role
-- **Body:** Form fields `title`, `difficulty`, `statement`, `testcase`, `output`
-- **Response:** 200 OK on success, 401 if unauthorized, 500 on error
-
----
-
-## Runtime Configuration
-
-Add runtimes in [configuration/local/runtimeconfigs.yaml](configuration/local/runtimeconfigs.yaml):
-
-```yaml
-runtimeconfigs:
-  "python:3.12":
-    image: python:3.12-slim
-    run: python /tmp/file
-    compile: null           # optional
-    timeout: 2              # seconds
-    memory: 67108864        # bytes (64 MB)
-  
-  "gcc":
-    image: frolvlad/alpine-gcc
-    compile: gcc -x c /tmp/file -o /tmp/a.out
-    run: /tmp/a.out
-    timeout: 2
-    memory: 67108864
+```bash
+docker compose -f docker-compose.yaml up --build
 ```
 
-The key (e.g., "python:3.12") is the exchange name; the image is pulled by the worker on startup
-Ensure the Docker image is pullable (public or in your registry).
-The API will auto-publish to exchange "ruby:3.2"; worker will spawn a listener and process tasks.
+### Option C: Manual dependency setup
+
+Use the provided scripts if you prefer to manage containers yourself:
+
+```bash
+./scripts/init_db.sh      # PostgreSQL
+./scripts/init_redis.sh    # Redis
+# Start RabbitMQ separately
+```
+
+Then follow the same steps as Option A from "Load environment" onward.
 
 ---
 
-## Design Notes & Improvements
+## Configuration & Environment Variables
 
-### Current Strengths
-- Clean separation: API enqueues, Worker executes, DB persists
-- Async/concurrent execution via Tokio
-- Resource limits enforced at container level (memory, timeout)
-- Session management via Redis
-- Graceful shutdown with container cleanup
-- Composable runtime configs (easy to add languages)
+Configuration is loaded from `configuration/local.yaml` and can be overridden with environment variables prefixed with `CRABJUDGE_` (double underscore `__` for nesting).
 
-### Known Limitations & TODOs
+| Variable | Description | Default |
+|---|---|---|
+| `CRABJUDGE_APPLICATION__HOST` | API bind host | `127.0.0.1` |
+| `CRABJUDGE_APPLICATION__PORT` | API bind port | `8080` |
+| `CRABJUDGE_APPLICATION__BASE_URL` | Public API URL | `http://127.0.0.1:8080` |
+| `CRABJUDGE_DATABASE__USER` | PostgreSQL user | `api` |
+| `CRABJUDGE_DATABASE__PASSWORD` | PostgreSQL password | `123` |
+| `CRABJUDGE_DATABASE__HOST` | PostgreSQL host | `localhost` |
+| `CRABJUDGE_DATABASE__PORT` | PostgreSQL port | `5432` |
+| `CRABJUDGE_DATABASE__DBNAME` | PostgreSQL database name | `judge` |
+| `CRABJUDGE_REDIS__HOST` | Redis host | `localhost` |
+| `CRABJUDGE_REDIS__PORT` | Redis port | `6379` |
+| `CRABJUDGE_RABBITMQ__HOST` | RabbitMQ host | `localhost` |
+| `CRABJUDGE_RABBITMQ__PORT` | RabbitMQ port | `5672` |
+| `CRABJUDGE_RABBITMQ__VHOST` | RabbitMQ virtual host | `/` |
+| `CRABJUDGE_EMAIL_CLIENT__BASE_URL` | Email provider endpoint | — |
+| `CRABJUDGE_EMAIL_CLIENT__SENDER_EMAIL` | Verified sender address | — |
+| `CRABJUDGE_EMAIL_CLIENT__AUTHORIZATION_TOKEN` | Email API token | — |
+| `BACKEND_URL` | Backend URL for frontend proxy | `http://localhost:8080` |
 
-1. **Error Handling**: Some `.unwrap()` calls in task handlers could leak resources on panic. Should use proper error propagation with error tracking for observability.
-
-2. **Queue Acking**: Tasks are acked after completion (with potential loss on worker crash). Consider acking only after successful DB insert.
-
-3. **Image Cleanup**: Pulled images are not removed on shutdown. Consider adding a prune mechanism for long-running deployments.
-
-
-4. **Logging & Observability**: Add structured logging (tracing/tokio-console) for better debugging and performance profiling.
+Runtime configs (languages, memory limits, timeouts, Docker images) are defined in the YAML config under `runtimeconfigs`.
 
 ---
 
+## License
+
+This project is open source under the [MIT License](LICENSE).
