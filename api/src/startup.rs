@@ -128,8 +128,10 @@ pub async fn run(
             .wrap(RateLimiter::default())
             .wrap(
                 SessionMiddleware::builder(redis_store.clone(), secret_key.clone())
+                    // TODO: dont forget this during production
                     .cookie_secure(false)
                     .cookie_http_only(true)
+                    .cookie_same_site(actix_web::cookie::SameSite::Strict)
                     .build(),
             )
             .app_data(data_limiter.clone())

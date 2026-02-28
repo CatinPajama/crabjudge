@@ -9,6 +9,8 @@ use actix_web::{
     web::{self, Data},
 };
 use sqlx::PgPool;
+use tracing::warn;
+use validator::Validate;
 
 use crate::routes::role::Role;
 
@@ -60,10 +62,12 @@ impl ResponseError for ConfirmationError {
 pub struct ConfirmationQueryParams {
     verification_token: String,
 }
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Validate)]
 pub struct FormData {
-    username: String,
-    password: String,
+    #[validate(length(min = 3, max = 100))]
+    pub username: String,
+    #[validate(length(min = 8, max = 100))]
+    pub password: String, // TODO use secret package
 }
 
 pub async fn signup_confirmation(
@@ -71,7 +75,10 @@ pub async fn signup_confirmation(
     query_params: web::Query<ConfirmationQueryParams>,
     pgpool: Data<PgPool>,
 ) -> Result<HttpResponse, ConfirmationError> {
-
+    form.validate().map_err(|e| {
+        warn!("Signup validation failed: {}", e);
+        ConfirmationError::Invalid(anyhow::anyhow!(e))
+    })?;
     let mut tx = pgpool.begin().await?;
 
     let row = sqlx::query!(
@@ -91,14 +98,16 @@ pub async fn signup_confirmation(
         .map_err(|_| ConfirmationError::Invalid(anyhow::anyhow!("Unabled to argon2 hash")))?
         .to_string();
 
-    let role : &str = Role::User.into();
+    let role: &str = Role::User.into();
     sqlx::query!(
         r#"INSERT INTO users (username, password, role, email) VALUES ($1,$2,$3,$4);"#,
         form.username,
         password_hash,
         role,
         row.unwrap().email
-    ).execute(&mut *tx).await?;
+    )
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
 
